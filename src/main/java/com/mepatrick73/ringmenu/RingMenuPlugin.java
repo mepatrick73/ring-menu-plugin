@@ -1,0 +1,217 @@
+package com.mepatrick73.ringmenu;
+
+import com.google.inject.Provides;
+import com.mepatrick73.ringmenu.editor.RingEditorPanel;
+import com.mepatrick73.ringmenu.engine.runtime.RingController;
+import com.mepatrick73.ringmenu.engine.runtime.RingMenuOverlay;
+import com.mepatrick73.ringmenu.providers.BankTagsProvider;
+import com.mepatrick73.ringmenu.providers.InventorySetupsProvider;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.ScriptID;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.events.ScriptPostFired;
+import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.VarbitID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetInfo;
+import net.runelite.api.widgets.InterfaceID;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.input.MouseAdapter;
+import net.runelite.client.input.MouseManager;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDependency;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.banktags.BankTagsPlugin;
+import net.runelite.client.plugins.banktags.BankTagsService;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.util.ImageUtil;
+
+import javax.inject.Inject;
+import javax.swing.*;
+import java.awt.event.MouseEvent;
+import java.util.List;
+
+@Slf4j
+@PluginDependency(BankTagsPlugin.class)
+@PluginDescriptor(
+	name = "Ring Menu",
+	description = "Radial ring menu for quickly accessing bank tags and inventory setups",
+	tags = {"ring", "menu", "radial", "bank", "inventory", "setups"}
+)
+public class RingMenuPlugin extends Plugin
+{
+	@Inject private Client client;
+	@Inject private RingController ringController;
+	@Inject private RingMenuOverlay overlay;
+	@Inject private OverlayManager overlayManager;
+	@Inject private MouseManager mouseManager;
+	@Inject private BankTagsService bankTagsService;
+	@Inject private InventorySetupsProvider inventorySetupsProvider;
+	@Inject private RingManager ringManager;
+	@Inject private RingEditorPanel editorPanel;
+	@Inject private ClientToolbar clientToolbar;
+	@Inject private ConfigManager configManager;
+
+	private NavigationButton navButton;
+
+	// False from WidgetLoaded until the first BANKMAIN_FINISHBUILDING of this bank session.
+	// Prevents VarbitChanged from misreading server-sent varbit resets on bank open as user navigation.
+	private boolean bankWasOpen;
+	// Set by WidgetLoaded; consumed by onGameTick, which is a safe point to call openBankTag().
+	private boolean pendingReapply;
+
+	private final MouseAdapter mouseListener = new MouseAdapter()
+	{
+		@Override
+		public MouseEvent mousePressed(MouseEvent event)
+		{
+			if (!ringController.isOpen()) return event;
+
+			if (SwingUtilities.isRightMouseButton(event))
+			{
+				ringController.close();
+				event.consume();
+				return event;
+			}
+
+			if (SwingUtilities.isLeftMouseButton(event))
+			{
+				if (overlay.isOutsideRing(event.getX(), event.getY()))
+				{
+					ringController.close();
+					event.consume();
+					return event;
+				}
+
+				int idx = overlay.getHighlightedIndex();
+				if (idx >= 0)
+				{
+					ringController.currentEntries().get(idx).onSelect(ringController);
+				}
+				else if (ringController.canGoBack())
+				{
+					ringController.back();
+				}
+				else
+				{
+					ringController.close();
+				}
+				event.consume();
+				return event;
+			}
+
+			return event;
+		}
+	};
+
+	@Override
+	protected void startUp()
+	{
+		ringManager.setProviders(List.of(
+			getInjector().getInstance(InventorySetupsProvider.class),
+			getInjector().getInstance(BankTagsProvider.class)
+		));
+		ringManager.load();
+		editorPanel.rebuildRingRows();
+
+		overlayManager.add(overlay);
+		mouseManager.registerMouseListener(mouseListener);
+
+		navButton = NavigationButton.builder()
+			.tooltip("Ring Menu")
+			.icon(ImageUtil.loadImageResource(getClass(), "ring_icon.png"))
+			.priority(6)
+			.panel(editorPanel)
+			.build();
+		clientToolbar.addNavigation(navButton);
+	}
+
+	@Override
+	protected void shutDown()
+	{
+		mouseManager.unregisterMouseListener(mouseListener);
+		overlayManager.remove(overlay);
+		ringController.close();
+		ringManager.unload();
+		if (navButton != null) clientToolbar.removeNavigation(navButton);
+	}
+
+	// WidgetLoaded fires before BANKMAIN_FINISHBUILDING when the bank opens.
+	@Subscribe
+	public void onWidgetLoaded(WidgetLoaded event)
+	{
+		if (event.getGroupId() == InterfaceID.BANK)
+		{
+			bankWasOpen = false;
+			pendingReapply = true;
+		}
+	}
+
+	// GameTick is outside script execution — safe to call openBankTag() here.
+	@Subscribe
+	public void onGameTick(GameTick event)
+	{
+		if (!pendingReapply) return;
+		pendingReapply = false;
+		inventorySetupsProvider.reapplyIfNeeded();
+	}
+
+	// BANK_CURRENTTAB changes whenever the user switches bank tabs.
+	// If the resulting tab is not our setup's tag, the user navigated away.
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged event)
+	{
+		if (event.getVarbitId() != VarbitID.BANK_CURRENTTAB) return;
+		if (!bankWasOpen) return;
+		if (inventorySetupsProvider.getActiveSetupName() == null) return;
+
+		if (event.getValue() != 0 || !inventorySetupsProvider.isActiveTagCurrent())
+		{
+			inventorySetupsProvider.clear();
+			pendingReapply = false;
+		}
+	}
+
+	@Subscribe
+	public void onScriptPostFired(ScriptPostFired event)
+	{
+		if (event.getScriptId() != ScriptID.BANKMAIN_FINISHBUILDING) return;
+
+		bankWasOpen = true;
+
+		String setupName = inventorySetupsProvider.getActiveSetupName();
+		if (setupName == null) return;
+
+		if (inventorySetupsProvider.isActiveTagCurrent())
+		{
+			Widget title = client.getWidget(WidgetInfo.BANK_TITLE_BAR);
+			if (title != null)
+			{
+				title.setText("Setup <col=ff0000>" + setupName + "</col>");
+			}
+		}
+	}
+
+	@Subscribe
+	public void onMenuEntryAdded(MenuEntryAdded event)
+	{
+		if (!ringController.isOpen()) return;
+		net.runelite.api.Point mouse = client.getMouseCanvasPosition();
+		if (!overlay.isOutsideRing(mouse.getX(), mouse.getY()))
+		{
+			client.getMenu().setMenuEntries(new net.runelite.api.MenuEntry[0]);
+		}
+	}
+
+	@Provides
+	RingMenuConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(RingMenuConfig.class);
+	}
+}
