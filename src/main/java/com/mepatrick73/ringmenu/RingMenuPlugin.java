@@ -1,12 +1,10 @@
 package com.mepatrick73.ringmenu;
 
-import com.google.inject.Provides;
 import com.mepatrick73.ringmenu.editor.RingEditorPanel;
 import com.mepatrick73.ringmenu.engine.runtime.RingController;
 import com.mepatrick73.ringmenu.engine.runtime.RingMenuOverlay;
 import com.mepatrick73.ringmenu.providers.BankTagsProvider;
 import com.mepatrick73.ringmenu.providers.InventorySetupsProvider;
-import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.ScriptID;
 import net.runelite.api.events.GameTick;
@@ -14,11 +12,9 @@ import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.ScriptPostFired;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
-import net.runelite.api.widgets.WidgetInfo;
-import net.runelite.api.widgets.InterfaceID;
-import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.MouseAdapter;
 import net.runelite.client.input.MouseManager;
@@ -26,7 +22,6 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDependency;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.banktags.BankTagsPlugin;
-import net.runelite.client.plugins.banktags.BankTagsService;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -37,7 +32,6 @@ import javax.swing.*;
 import java.awt.event.MouseEvent;
 import java.util.List;
 
-@Slf4j
 @PluginDependency(BankTagsPlugin.class)
 @PluginDescriptor(
 	name = "Ring Menu",
@@ -51,12 +45,10 @@ public class RingMenuPlugin extends Plugin
 	@Inject private RingMenuOverlay overlay;
 	@Inject private OverlayManager overlayManager;
 	@Inject private MouseManager mouseManager;
-	@Inject private BankTagsService bankTagsService;
 	@Inject private InventorySetupsProvider inventorySetupsProvider;
 	@Inject private RingManager ringManager;
 	@Inject private RingEditorPanel editorPanel;
 	@Inject private ClientToolbar clientToolbar;
-	@Inject private ConfigManager configManager;
 
 	private NavigationButton navButton;
 
@@ -146,7 +138,7 @@ public class RingMenuPlugin extends Plugin
 	@Subscribe
 	public void onWidgetLoaded(WidgetLoaded event)
 	{
-		if (event.getGroupId() == InterfaceID.BANK)
+		if (event.getGroupId() == InterfaceID.BANKMAIN)
 		{
 			bankWasOpen = false;
 			pendingReapply = true;
@@ -190,7 +182,7 @@ public class RingMenuPlugin extends Plugin
 
 		if (inventorySetupsProvider.isActiveTagCurrent())
 		{
-			Widget title = client.getWidget(WidgetInfo.BANK_TITLE_BAR);
+			Widget title = client.getWidget(InterfaceID.Bankmain.TITLE);
 			if (title != null)
 			{
 				title.setText("Setup <col=ff0000>" + setupName + "</col>");
@@ -207,11 +199,5 @@ public class RingMenuPlugin extends Plugin
 		{
 			client.getMenu().setMenuEntries(new net.runelite.api.MenuEntry[0]);
 		}
-	}
-
-	@Provides
-	RingMenuConfig provideConfig(ConfigManager configManager)
-	{
-		return configManager.getConfig(RingMenuConfig.class);
 	}
 }
