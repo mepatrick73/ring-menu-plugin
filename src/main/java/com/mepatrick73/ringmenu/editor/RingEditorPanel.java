@@ -414,7 +414,7 @@ public class RingEditorPanel extends PluginPanel
 		fixedNorth.add(buildPickerControls());
 		detailRoot.add(fixedNorth, BorderLayout.NORTH);
 
-		entriesContainer = new JPanel()
+		entriesContainer = new TrackWidthPanel(null)
 		{
 			{
 				setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
