@@ -695,11 +695,22 @@ public class RingEditorPanel extends PluginPanel
 		pickerSearch.getDocument().addDocumentListener(new DocumentListener()
 		{
 			@Override
-			public void insertUpdate(DocumentEvent e)  { scheduleProviderRefresh(); }
+			public void insertUpdate(DocumentEvent e)
+			{
+				scheduleProviderRefresh();
+			}
+
 			@Override
-			public void removeUpdate(DocumentEvent e)  { scheduleProviderRefresh(); }
+			public void removeUpdate(DocumentEvent e)
+			{
+				scheduleProviderRefresh();
+			}
+
 			@Override
-			public void changedUpdate(DocumentEvent e) { scheduleProviderRefresh(); }
+			public void changedUpdate(DocumentEvent e)
+			{
+				scheduleProviderRefresh();
+			}
 		});
 
 		JButton clearBtn = new JButton("×");
