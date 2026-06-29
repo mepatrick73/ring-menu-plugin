@@ -54,7 +54,9 @@ public class RingManager
 		{
 			try
 			{
-				Type type = new TypeToken<List<RingDefinition>>(){}.getType();
+				Type type = new TypeToken<List<RingDefinition>>()
+				{
+				}.getType();
 				List<RingDefinition> loaded = gson.fromJson(json, type);
 				if (loaded != null)
 				{
@@ -115,7 +117,11 @@ public class RingManager
 			@Override
 			public void hotkeyPressed()
 			{
-				if (ringController.isOpen()) { ringController.close(); return; }
+				if (ringController.isOpen())
+				{
+					ringController.close();
+					return;
+				}
 				overlay.setCenter(new Point(client.getCanvasWidth() / 2, client.getCanvasHeight() / 2));
 				ringController.open(buildRingNode(ring.getEntries(), ring.getName()));
 			}

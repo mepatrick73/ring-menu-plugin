@@ -22,10 +22,16 @@ public class BankTagsProvider implements RingProvider
 	@Inject private BankTagsService bankTagsService;
 
 	@Override
-	public String getId() { return ID; }
+	public String getId()
+	{
+		return ID;
+	}
 
 	@Override
-	public String getLabel() { return "Bank Tags"; }
+	public String getLabel()
+	{
+		return "Bank Tags";
+	}
 
 	@Override
 	public List<RingTreeEntry> getAvailableEntries()

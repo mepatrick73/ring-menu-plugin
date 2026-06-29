@@ -35,10 +35,16 @@ public class InventorySetupsProvider implements RingProvider
 	private volatile String activeTagName;
 
 	@Override
-	public String getId() { return ID; }
+	public String getId()
+	{
+		return ID;
+	}
 
 	@Override
-	public String getLabel() { return "Inventory Setups"; }
+	public String getLabel()
+	{
+		return "Inventory Setups";
+	}
 
 	@Override
 	public List<RingTreeEntry> getAvailableEntries()
@@ -80,7 +86,10 @@ public class InventorySetupsProvider implements RingProvider
 		};
 	}
 
-	public String getActiveSetupName() { return activeSetupName; }
+	public String getActiveSetupName()
+	{
+		return activeSetupName;
+	}
 
 	public boolean isActiveTagCurrent()
 	{

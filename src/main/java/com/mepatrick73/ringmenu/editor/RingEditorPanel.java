@@ -30,12 +30,40 @@ import java.util.stream.Collectors;
 /** JPanel that tells its parent JScrollPane "fill my width to the viewport width." */
 class TrackWidthPanel extends JPanel implements Scrollable
 {
-	TrackWidthPanel(LayoutManager layout) { super(layout); }
-	@Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
-	@Override public int getScrollableUnitIncrement(Rectangle r, int o, int d) { return 8; }
-	@Override public int getScrollableBlockIncrement(Rectangle r, int o, int d) { return 40; }
-	@Override public boolean getScrollableTracksViewportWidth()  { return true; }
-	@Override public boolean getScrollableTracksViewportHeight() { return false; }
+	TrackWidthPanel(LayoutManager layout)
+	{
+		super(layout);
+	}
+
+	@Override
+	public Dimension getPreferredScrollableViewportSize()
+	{
+		return getPreferredSize();
+	}
+
+	@Override
+	public int getScrollableUnitIncrement(Rectangle r, int o, int d)
+	{
+		return 8;
+	}
+
+	@Override
+	public int getScrollableBlockIncrement(Rectangle r, int o, int d)
+	{
+		return 40;
+	}
+
+	@Override
+	public boolean getScrollableTracksViewportWidth()
+	{
+		return true;
+	}
+
+	@Override
+	public boolean getScrollableTracksViewportHeight()
+	{
+		return false;
+	}
 }
 
 public class RingEditorPanel extends PluginPanel
@@ -58,9 +86,13 @@ public class RingEditorPanel extends PluginPanel
 
 	// Cards — custom layout reports only the VISIBLE card's preferred size so
 	// the detail card's large JScrollPane defaults don't pollute the list view.
-	private final CardLayout cards = new CardLayout() {
-		@Override public Dimension preferredLayoutSize(Container parent) {
-			for (Component c : parent.getComponents()) {
+	private final CardLayout cards = new CardLayout()
+	{
+		@Override
+		public Dimension preferredLayoutSize(Container parent)
+		{
+			for (Component c : parent.getComponents())
+			{
 				if (c.isVisible()) return c.getPreferredSize();
 			}
 			return super.preferredLayoutSize(parent);
@@ -227,7 +259,8 @@ public class RingEditorPanel extends PluginPanel
 
 		JButton pen = smallBtn("✎");
 		pen.setForeground(TEXT_DIM);
-		pen.addActionListener(e -> {
+		pen.addActionListener(e ->
+		{
 			String newName = (String) JOptionPane.showInputDialog(
 				this, null, "Rename Ring", JOptionPane.PLAIN_MESSAGE, null, null, ring.getName());
 			if (newName == null || newName.trim().isEmpty()) return;
@@ -238,7 +271,8 @@ public class RingEditorPanel extends PluginPanel
 
 		JButton del = smallBtn("×");
 		del.setForeground(TEXT_DIM);
-		del.addActionListener(e -> {
+		del.addActionListener(e ->
+		{
 			int ok = JOptionPane.showConfirmDialog(this,
 				"Delete ring \"" + ring.getName() + "\"?",
 				"Delete Ring", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
@@ -257,9 +291,31 @@ public class RingEditorPanel extends PluginPanel
 		row.add(actions, BorderLayout.EAST);
 		row.addMouseListener(new MouseAdapter()
 		{
-			@Override public void mouseClicked(MouseEvent e) { selectRing(ring); }
-			@Override public void mouseEntered(MouseEvent e) { row.setBackground(BG_MED); labels.setBackground(BG_MED); actions.setBackground(BG_MED); pen.setBackground(BG_MED); del.setBackground(BG_MED); }
-			@Override public void mouseExited(MouseEvent e)  { row.setBackground(BG_DARK); labels.setBackground(BG_DARK); actions.setBackground(BG_DARK); pen.setBackground(BG_DARK); del.setBackground(BG_DARK); }
+			@Override
+			public void mouseClicked(MouseEvent e)
+			{
+				selectRing(ring);
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				row.setBackground(BG_MED);
+				labels.setBackground(BG_MED);
+				actions.setBackground(BG_MED);
+				pen.setBackground(BG_MED);
+				del.setBackground(BG_MED);
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				row.setBackground(BG_DARK);
+				labels.setBackground(BG_DARK);
+				actions.setBackground(BG_DARK);
+				pen.setBackground(BG_DARK);
+				del.setBackground(BG_DARK);
+			}
 		});
 		return row;
 	}
@@ -500,7 +556,11 @@ public class RingEditorPanel extends PluginPanel
 		nameField.addActionListener(e -> saveRingName());
 		nameField.addFocusListener(new FocusAdapter()
 		{
-			@Override public void focusLost(FocusEvent e) { saveRingName(); }
+			@Override
+			public void focusLost(FocusEvent e)
+			{
+				saveRingName();
+			}
 		});
 		row.add(lbl, BorderLayout.WEST);
 		row.add(nameField, BorderLayout.CENTER);
@@ -510,7 +570,11 @@ public class RingEditorPanel extends PluginPanel
 	private void saveRingName()
 	{
 		String t = nameField.getText().trim();
-		if (!t.isEmpty()) { selectedRing.setName(t); markDirty(); }
+		if (!t.isEmpty())
+		{
+			selectedRing.setName(t);
+			markDirty();
+		}
 	}
 
 	private JPanel buildHotkeyRow()
@@ -529,12 +593,14 @@ public class RingEditorPanel extends PluginPanel
 		btn.setForeground(TEXT);
 		btn.setFocusPainted(false);
 		btn.setBorder(new EmptyBorder(4, 8, 4, 8));
-		btn.addActionListener(e -> {
+		btn.addActionListener(e ->
+		{
 			btn.setText("Press a key…");
 			btn.requestFocusInWindow();
 			btn.addKeyListener(new KeyAdapter()
 			{
-				@Override public void keyPressed(KeyEvent ke)
+				@Override
+				public void keyPressed(KeyEvent ke)
 				{
 					Keybind kb = new Keybind(ke.getKeyCode(), ke.getModifiersEx());
 					selectedRing.setHotkey(kb);
@@ -572,7 +638,8 @@ public class RingEditorPanel extends PluginPanel
 		btn.setForeground(TEXT_DIM);
 		btn.setFocusPainted(false);
 		btn.setBorderPainted(false);
-		btn.addActionListener(e -> {
+		btn.addActionListener(e ->
+		{
 			String name = JOptionPane.showInputDialog(this, "Sub-ring name:", "New Sub-Ring", JOptionPane.PLAIN_MESSAGE);
 			if (name == null || name.trim().isEmpty()) return;
 			activeList.add(RingTreeEntry.subRing(name.trim()));
@@ -616,9 +683,23 @@ public class RingEditorPanel extends PluginPanel
 		pickerSearch.putClientProperty("JTextField.placeholderText", "Filter…");
 		pickerSearch.getDocument().addDocumentListener(new DocumentListener()
 		{
-			@Override public void insertUpdate(DocumentEvent e)  { refreshProviders(); }
-			@Override public void removeUpdate(DocumentEvent e)  { refreshProviders(); }
-			@Override public void changedUpdate(DocumentEvent e) { refreshProviders(); }
+			@Override
+			public void insertUpdate(DocumentEvent e)
+			{
+				refreshProviders();
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent e)
+			{
+				refreshProviders();
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent e)
+			{
+				refreshProviders();
+			}
 		});
 
 		JButton clearBtn = new JButton("×");
@@ -709,7 +790,7 @@ public class RingEditorPanel extends PluginPanel
 	}
 
 	private JPanel buildEntryRow(RingTreeEntry entry, List<RingTreeEntry> parentList,
-	                              int idx, int depth, boolean levelIsActive)
+		int idx, int depth, boolean levelIsActive)
 	{
 		boolean isActiveParent = entry.isSubRing() && entry.getChildren() == activeList;
 		boolean expanded       = expandedRings.contains(entry);
@@ -830,7 +911,8 @@ public class RingEditorPanel extends PluginPanel
 		JButton del = smallBtn("×");
 		del.setForeground(TEXT_DIM);
 		del.setBackground(BG_DARK);
-		del.addActionListener(e -> {
+		del.addActionListener(e ->
+		{
 			if (entry.isSubRing())
 			{
 				int ok = JOptionPane.showConfirmDialog(this,
@@ -852,7 +934,8 @@ public class RingEditorPanel extends PluginPanel
 			JButton pen = smallBtn("✎");
 			pen.setForeground(TEXT_DIM);
 			pen.setBackground(BG_DARK);
-			pen.addActionListener(e -> {
+			pen.addActionListener(e ->
+			{
 				String newLabel = (String) JOptionPane.showInputDialog(
 					this, null, "Rename Sub-Ring", JOptionPane.PLAIN_MESSAGE, null, null, entry.getLabel());
 				if (newLabel == null || newLabel.trim().isEmpty()) return;
@@ -1077,7 +1160,11 @@ public class RingEditorPanel extends PluginPanel
 	{
 		if (providersWrapper == null) return;
 		populateProvidersContainer();
-		if (detailRoot != null) { detailRoot.revalidate(); detailRoot.repaint(); }
+		if (detailRoot != null)
+		{
+			detailRoot.revalidate();
+			detailRoot.repaint();
+		}
 	}
 
 	private JPanel buildPickerRow(RingTreeEntry entry)
@@ -1093,7 +1180,8 @@ public class RingEditorPanel extends PluginPanel
 
 		JButton add = smallBtn("+");
 		add.setForeground(ACCENT);
-		add.addActionListener(e -> {
+		add.addActionListener(e ->
+		{
 			// Copy the entry so the same provider item can be added more than once without
 			// the DnD loop confusing the two references (it uses == for identity).
 			activeList.add(RingTreeEntry.action(entry.getLabel(), entry.getProviderId(), entry.getEntryId()));

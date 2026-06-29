@@ -6,19 +6,19 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class RingAction implements RingEntry
 {
-    private final String label;
-    private final Runnable action;
+	private final String label;
+	private final Runnable action;
 
-    @Override
-    public String getLabel()
-    {
-        return label;
-    }
+	@Override
+	public String getLabel()
+	{
+		return label;
+	}
 
-    @Override
-    public void onSelect(RingController controller)
-    {
-        controller.close();
-        action.run();
-    }
+	@Override
+	public void onSelect(RingController controller)
+	{
+		controller.close();
+		action.run();
+	}
 }

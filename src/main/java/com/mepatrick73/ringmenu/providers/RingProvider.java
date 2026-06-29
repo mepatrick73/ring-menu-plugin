@@ -11,5 +11,7 @@ public interface RingProvider
 	List<RingTreeEntry> getAvailableEntries();
 	Runnable buildAction(RingTreeEntry entry);
 
-	default void deactivate() {}
+	default void deactivate()
+	{
+	}
 }

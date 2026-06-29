@@ -12,7 +12,10 @@ import java.util.List;
 @ToString
 public class RingTreeEntry
 {
-	public enum Type { ACTION, SUB_RING }
+	public enum Type
+	{
+		ACTION, SUB_RING
+	}
 
 	private Type type;
 	private String label;
@@ -25,10 +28,16 @@ public class RingTreeEntry
 	private List<RingTreeEntry> children;
 
 	@Override
-	public boolean equals(Object o) { return this == o; }
+	public boolean equals(Object o)
+	{
+		return this == o;
+	}
 
 	@Override
-	public int hashCode() { return System.identityHashCode(this); }
+	public int hashCode()
+	{
+		return System.identityHashCode(this);
+	}
 
 	public static RingTreeEntry action(String label, String providerId, String entryId)
 	{
