@@ -111,18 +111,19 @@ public class RingMenuPlugin extends Plugin
 	{
 		ringManager.setProviders(List.of(inventorySetupsProvider, bankTagsProvider));
 		ringManager.load();
-		editorPanel.rebuildRingRows();
-
 		overlayManager.add(overlay);
 		mouseManager.registerMouseListener(mouseListener);
-
-		navButton = NavigationButton.builder()
-			.tooltip("Ring Menu")
-			.icon(ImageUtil.loadImageResource(com.mepatrick73.ringmenu.RingMenuPlugin.class, "ring_icon.png"))
-			.priority(6)
-			.panel(editorPanel)
-			.build();
-		clientToolbar.addNavigation(navButton);
+		SwingUtilities.invokeLater(() ->
+		{
+			editorPanel.rebuildRingRows();
+			navButton = NavigationButton.builder()
+				.tooltip("Ring Menu")
+				.icon(ImageUtil.loadImageResource(com.mepatrick73.ringmenu.RingMenuPlugin.class, "ring_icon.png"))
+				.priority(6)
+				.panel(editorPanel)
+				.build();
+			clientToolbar.addNavigation(navButton);
+		});
 	}
 
 	@Override

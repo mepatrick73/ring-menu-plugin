@@ -90,9 +90,18 @@ public class RingMenuOverlay extends Overlay
     // Written by setCenter() (EDT); read by render() (client thread). Volatile for visibility.
     private volatile Point center = null;
 
-    // Cached derived fonts — initialized once on first render to avoid per-frame deriveFont() calls.
-    private Font labelFont;
-    private Font arrowFont;
+    private final Font labelFont;
+    private final Font arrowFont;
+
+    // Per-slice geometry cache — recomputed only when the number of slices changes.
+    // Eliminates sin/cos calls for static geometry on every frame.
+    private int      cachedN     = -1;
+    private double   sliceSize;        // radians per slice
+    private int      sliceDeg;         // degrees per slice (for fillArc)
+    private double[] sliceAngles;      // center angle of each slice
+    private int[]    divDx1, divDy1;   // divider line inner endpoint offsets from center
+    private int[]    divDx2, divDy2;   // divider line outer endpoint offsets from center
+    private int[]    lblDx,  lblDy;    // label center offsets from center
 
     @Inject
     public RingMenuOverlay(Client client, RingController ringController)
@@ -101,6 +110,32 @@ public class RingMenuOverlay extends Overlay
         this.ringController = ringController;
         setLayer(OverlayLayer.ABOVE_WIDGETS);
         setPosition(OverlayPosition.DYNAMIC);
+        labelFont = FontManager.getRunescapeFont().deriveFont(17f);
+        arrowFont = FontManager.getRunescapeBoldFont().deriveFont(26f);
+    }
+
+    private void rebuildSliceCache(int n)
+    {
+        if (n == cachedN) return;
+        cachedN    = n;
+        sliceSize  = 2 * Math.PI / n;
+        sliceDeg   = (int) Math.toDegrees(sliceSize);
+        int midR   = (INNER_RADIUS + RING_RADIUS) / 2;
+        sliceAngles = new double[n];
+        divDx1 = new int[n]; divDy1 = new int[n];
+        divDx2 = new int[n]; divDy2 = new int[n];
+        lblDx  = new int[n]; lblDy  = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            sliceAngles[i] = sliceSize * i - Math.PI / 2;
+            double div     = sliceAngles[i] - sliceSize / 2;
+            divDx1[i] = (int)(INNER_RADIUS * Math.cos(div));
+            divDy1[i] = (int)(INNER_RADIUS * Math.sin(div));
+            divDx2[i] = (int)(RING_RADIUS  * Math.cos(div));
+            divDy2[i] = (int)(RING_RADIUS  * Math.sin(div));
+            lblDx[i]  = (int)(midR         * Math.cos(sliceAngles[i]));
+            lblDy[i]  = (int)(midR         * Math.sin(sliceAngles[i]));
+        }
     }
 
     public void setCenter(Point absoluteCanvasPoint)
@@ -133,19 +168,18 @@ public class RingMenuOverlay extends Overlay
         int dy = mouse.getY() - c.y;
         if (dx * dx + dy * dy <= INNER_RADIUS * INNER_RADIUS) return -1;
 
-        return bestSliceIndex(dx, dy, entries.size());
+        rebuildSliceCache(entries.size());
+        return bestSliceIndex(dx, dy);
     }
 
-    private int bestSliceIndex(int dx, int dy, int n)
+    private int bestSliceIndex(int dx, int dy)
     {
         double mouseAngle = Math.atan2(dy, dx);
-        double sliceSize  = 2 * Math.PI / n;
         int    best       = 0;
         double bestDiff   = Double.MAX_VALUE;
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < cachedN; i++)
         {
-            double entryAngle = sliceSize * i - Math.PI / 2;
-            double diff       = Math.abs(angleDiff(mouseAngle, entryAngle));
+            double diff = Math.abs(angleDiff(mouseAngle, sliceAngles[i]));
             if (diff < bestDiff) { bestDiff = diff; best = i; }
         }
         return best;
@@ -165,16 +199,10 @@ public class RingMenuOverlay extends Overlay
         Point c = center;
         if (!ringController.isOpen() || c == null) return null;
 
-        // Initialize derived fonts once from the overlay's Graphics2D context.
-        if (labelFont == null)
-        {
-            labelFont = FontManager.getRunescapeFont().deriveFont(17f);
-            arrowFont = FontManager.getRunescapeBoldFont().deriveFont(26f);
-        }
-
         List<RingEntry> entries = ringController.currentEntries();
         int n  = entries.size();
         int lx = FULL_R, ly = FULL_R;
+        if (n > 0) rebuildSliceCache(n);
 
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,      RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
@@ -205,22 +233,16 @@ public class RingMenuOverlay extends Overlay
 
         if (n > 0)
         {
-            // Compute highlighted slice index inline (avoids redundant mouse + entries reads).
-            int highlighted  = hoverCenter ? -1 : bestSliceIndex(mdx, mdy, n);
-            double sliceSize = 2 * Math.PI / n;
-            double sliceDeg  = Math.toDegrees(sliceSize);
+            int highlighted = hoverCenter ? -1 : bestSliceIndex(mdx, mdy);
 
             // ── 2. Highlighted pie slice ──────────────────────────────────
             if (highlighted >= 0)
             {
-                double cAngle = sliceSize * highlighted - Math.PI / 2;
-                int startDeg  = (int)(-Math.toDegrees(cAngle) + sliceDeg / 2);
-                int arcDeg    = -(int)sliceDeg;
-
+                int startDeg = (int)(-Math.toDegrees(sliceAngles[highlighted]) + sliceDeg / 2);
                 g.setComposite(acSlice);
                 g.setColor(SLICE_HOT);
                 g.fillArc(lx - RING_RADIUS, ly - RING_RADIUS,
-                    RING_RADIUS * 2, RING_RADIUS * 2, startDeg, arcDeg);
+                    RING_RADIUS * 2, RING_RADIUS * 2, startDeg, -sliceDeg);
             }
 
             // ── 3. Center button fill ─────────────────────────────────────
@@ -230,18 +252,13 @@ public class RingMenuOverlay extends Overlay
                 : (hoverCenter ? CENTER_BACK_HOT  : CENTER_BACK_COLD));
             g.fillOval(lx - CENTER_R, ly - CENTER_R, CENTER_R * 2, CENTER_R * 2);
 
-            // ── 4. Slice divider lines ────────────────────────────────────
+            // ── 4. Slice divider lines (precomputed offsets) ──────────────
             g.setComposite(acDiv);
             g.setColor(DIVIDER);
             g.setStroke(STROKE_THIN);
             for (int i = 0; i < n; i++)
             {
-                double div = sliceSize * i - Math.PI / 2 - sliceSize / 2;
-                int x1 = lx + (int)(INNER_RADIUS * Math.cos(div));
-                int y1 = ly + (int)(INNER_RADIUS * Math.sin(div));
-                int x2 = lx + (int)(RING_RADIUS  * Math.cos(div));
-                int y2 = ly + (int)(RING_RADIUS   * Math.sin(div));
-                g.drawLine(x1, y1, x2, y2);
+                g.drawLine(lx + divDx1[i], ly + divDy1[i], lx + divDx2[i], ly + divDy2[i]);
             }
 
             // ── 5. Outer ring border ──────────────────────────────────────
@@ -265,18 +282,15 @@ public class RingMenuOverlay extends Overlay
                 g.drawOval(lx - RING_RADIUS, ly - RING_RADIUS, RING_RADIUS * 2, RING_RADIUS * 2);
             }
 
-            // ── 7. Slice text labels ──────────────────────────────────────
+            // ── 7. Slice text labels (precomputed center offsets) ─────────
             g.setComposite(acFull);
             g.setFont(labelFont);
             FontMetrics fm = g.getFontMetrics();
-            int midR = (INNER_RADIUS + RING_RADIUS) / 2;
 
             for (int i = 0; i < n; i++)
             {
-                double angle = sliceSize * i - Math.PI / 2;
-                int tx = lx + (int)(midR * Math.cos(angle));
-                int ty = ly + (int)(midR * Math.sin(angle));
-
+                int tx    = lx + lblDx[i];
+                int ty    = ly + lblDy[i];
                 String label = entries.get(i).getLabel();
                 int tw    = fm.stringWidth(label);
                 int textX = tx - tw / 2;

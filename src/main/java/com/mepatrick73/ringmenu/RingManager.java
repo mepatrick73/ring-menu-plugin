@@ -58,8 +58,6 @@ public class RingManager
 				List<RingDefinition> loaded = gson.fromJson(json, type);
 				if (loaded != null)
 				{
-					// Gson bypasses constructors; normalize any null entries lists from old/corrupt data.
-					loaded.forEach(r -> r.getEntries());
 					rings.addAll(loaded);
 				}
 			}

@@ -70,6 +70,7 @@ public class InventorySetupsProvider implements RingProvider
 	public Runnable buildAction(RingTreeEntry entry)
 	{
 		String name = entry.getEntryId();
+		// Must use murmur3_128 to match the tag name InventorySetups itself created.
 		String tagName = LAYOUT_PREFIX_MARKER + Hashing.murmur3_128().hashUnencodedChars(name).toString();
 		return () ->
 		{
