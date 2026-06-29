@@ -72,6 +72,7 @@ public class InventorySetupsProvider implements RingProvider
 		return entries;
 	}
 
+	// Must be called on the client thread.
 	@Override
 	public Runnable buildAction(RingTreeEntry entry)
 	{
@@ -106,6 +107,18 @@ public class InventorySetupsProvider implements RingProvider
 	public void deactivate()
 	{
 		clear();
+	}
+
+	// Must be called on the client thread. Mirrors InventorySetupsPlugin.resetBankSearch().
+	@Override
+	public Runnable cancelAction()
+	{
+		if (activeSetupName == null) return null;
+		return () ->
+		{
+			clear();
+			bankTagsService.closeBankTag();
+		};
 	}
 
 	public void reapplyIfNeeded()

@@ -21,6 +21,8 @@ public class RingDefinition
 	private int hotkeyCode      = 0;
 	@Setter(AccessLevel.NONE)
 	private int hotkeyModifiers = 0;
+	// Boxed Boolean so missing field in old JSON deserializes as null (treated as true).
+	private Boolean enabled;
 	private List<RingTreeEntry> entries;
 
 	public Keybind getHotkey()
@@ -45,6 +47,16 @@ public class RingDefinition
 	public boolean hasHotkey()
 	{
 		return !getHotkey().equals(Keybind.NOT_SET);
+	}
+
+	public boolean isEnabled()
+	{
+		return enabled == null || enabled;
+	}
+
+	public void setEnabled(boolean value)
+	{
+		enabled = value ? null : Boolean.FALSE;
 	}
 
 	public List<RingTreeEntry> getEntries()

@@ -14,4 +14,9 @@ public interface RingProvider
 	default void deactivate()
 	{
 	}
+
+	default Runnable cancelAction()
+	{
+		return null;
+	}
 }

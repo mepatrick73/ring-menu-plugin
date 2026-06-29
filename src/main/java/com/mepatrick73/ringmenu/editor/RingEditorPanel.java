@@ -272,7 +272,7 @@ public class RingEditorPanel extends PluginPanel
 
 		JLabel name = new JLabel(ring.getName());
 		name.setFont(FontManager.getRunescapeFont());
-		name.setForeground(TEXT);
+		name.setForeground(ring.isEnabled() ? TEXT : TEXT_DIM);
 
 		String hkTxt = ring.hasHotkey() ? ring.getHotkey().toString() : "no key";
 		JLabel hk = new JLabel(hkTxt);
@@ -308,9 +308,22 @@ public class RingEditorPanel extends PluginPanel
 			rebuildRingRows();
 		});
 
+		JCheckBox enabledBox = new JCheckBox();
+		enabledBox.setSelected(ring.isEnabled());
+		enabledBox.setBackground(BG_DARK);
+		enabledBox.setFocusPainted(false);
+		enabledBox.setToolTipText("Enable / disable this ring");
+		enabledBox.addActionListener(e ->
+		{
+			ring.setEnabled(enabledBox.isSelected());
+			ringManager.save();
+			name.setForeground(ring.isEnabled() ? TEXT : TEXT_DIM);
+		});
+
 		JPanel actions = new JPanel();
 		actions.setLayout(new BoxLayout(actions, BoxLayout.X_AXIS));
 		actions.setBackground(BG_DARK);
+		actions.add(enabledBox);
 		actions.add(pen);
 		actions.add(del);
 
@@ -629,7 +642,11 @@ public class RingEditorPanel extends PluginPanel
 				@Override
 				public void keyPressed(KeyEvent ke)
 				{
-					Keybind kb = new Keybind(ke.getKeyCode(), ke.getModifiersEx());
+					int code = ke.getKeyCode();
+					if (code == KeyEvent.VK_CONTROL || code == KeyEvent.VK_SHIFT
+						|| code == KeyEvent.VK_ALT   || code == KeyEvent.VK_META
+						|| code == KeyEvent.VK_ALT_GRAPH) return;
+					Keybind kb = new Keybind(ke);
 					selectedRing.setHotkey(kb);
 					markDirty();
 					btn.setText(kb.toString());

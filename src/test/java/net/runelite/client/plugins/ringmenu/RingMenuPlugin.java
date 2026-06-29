@@ -18,6 +18,7 @@ import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.MouseAdapter;
 import net.runelite.client.input.MouseManager;
@@ -47,6 +48,7 @@ import java.util.List;
 public class RingMenuPlugin extends Plugin
 {
 	@Inject private Client client;
+	@Inject private ClientThread clientThread;
 	@Inject private RingController ringController;
 	@Inject private RingMenuOverlay overlay;
 	@Inject private OverlayManager overlayManager;
@@ -57,7 +59,7 @@ public class RingMenuPlugin extends Plugin
 	@Inject private RingEditorPanel editorPanel;
 	@Inject private ClientToolbar clientToolbar;
 
-	private NavigationButton navButton;
+	private volatile NavigationButton navButton;
 
 	private boolean bankWasOpen;
 	private boolean pendingReapply;
@@ -96,6 +98,13 @@ public class RingMenuPlugin extends Plugin
 				}
 				else
 				{
+					clientThread.invoke(() ->
+						ringManager.getProviders().forEach(p ->
+						{
+							Runnable cancel = p.cancelAction();
+							if (cancel != null) cancel.run();
+						})
+					);
 					ringController.close();
 				}
 				event.consume();
@@ -133,7 +142,10 @@ public class RingMenuPlugin extends Plugin
 		overlayManager.remove(overlay);
 		ringController.close();
 		ringManager.unload();
-		if (navButton != null) clientToolbar.removeNavigation(navButton);
+		SwingUtilities.invokeLater(() ->
+		{
+			if (navButton != null) clientToolbar.removeNavigation(navButton);
+		});
 	}
 
 	@Subscribe

@@ -102,6 +102,7 @@ public class RingMenuOverlay extends Overlay
 	private int[]    divDx1, divDy1;   // divider line inner endpoint offsets from center
 	private int[]    divDx2, divDy2;   // divider line outer endpoint offsets from center
 	private int[]    lblDx,  lblDy;    // label center offsets from center
+	private int      maxLabelWidth;    // max pixel width for a label before truncation
 
 	@Inject
 	public RingMenuOverlay(Client client, RingController ringController)
@@ -121,6 +122,7 @@ public class RingMenuOverlay extends Overlay
 		sliceSize  = 2 * Math.PI / n;
 		sliceDeg   = (int) Math.toDegrees(sliceSize);
 		int midR   = (INNER_RADIUS + RING_RADIUS) / 2;
+		maxLabelWidth = (int)(2 * midR * Math.sin(Math.PI / n) * 0.80);
 		sliceAngles = new double[n];
 		divDx1 = new int[n]; divDy1 = new int[n];
 		divDx2 = new int[n]; divDy2 = new int[n];
@@ -195,6 +197,17 @@ public class RingMenuOverlay extends Overlay
 		while (d >  Math.PI) d -= 2 * Math.PI;
 		while (d < -Math.PI) d += 2 * Math.PI;
 		return d;
+	}
+
+	private static String truncate(String label, FontMetrics fm, int maxW)
+	{
+		if (fm.stringWidth(label) <= maxW) return label;
+		int ellW = fm.stringWidth("…");
+		while (label.length() > 0 && fm.stringWidth(label) + ellW > maxW)
+		{
+			label = label.substring(0, label.length() - 1);
+		}
+		return label + "…";
 	}
 
 	@Override
@@ -295,7 +308,7 @@ public class RingMenuOverlay extends Overlay
 			{
 				int tx    = lx + lblDx[i];
 				int ty    = ly + lblDy[i];
-				String label = entries.get(i).getLabel();
+				String label = truncate(entries.get(i).getLabel(), fm, maxLabelWidth);
 				int tw    = fm.stringWidth(label);
 				int textX = tx - tw / 2;
 				int textY = ty + fm.getAscent() / 2 - 1;

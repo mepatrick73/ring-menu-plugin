@@ -21,6 +21,8 @@ public class BankTagsProvider implements RingProvider
 	@Inject private ConfigManager configManager;
 	@Inject private BankTagsService bankTagsService;
 
+	private volatile String activeTag;
+
 	@Override
 	public String getId()
 	{
@@ -47,10 +49,33 @@ public class BankTagsProvider implements RingProvider
 		return entries;
 	}
 
+	// Must be called on the client thread.
 	@Override
 	public Runnable buildAction(RingTreeEntry entry)
 	{
 		String tag = entry.getEntryId();
-		return () -> bankTagsService.openBankTag(tag, BankTagsService.OPTION_ALLOW_MODIFICATIONS);
+		return () ->
+		{
+			activeTag = tag;
+			bankTagsService.openBankTag(tag, BankTagsService.OPTION_ALLOW_MODIFICATIONS);
+		};
+	}
+
+	@Override
+	public void deactivate()
+	{
+		activeTag = null;
+	}
+
+	// Must be called on the client thread.
+	@Override
+	public Runnable cancelAction()
+	{
+		if (activeTag == null) return null;
+		return () ->
+		{
+			activeTag = null;
+			bankTagsService.closeBankTag();
+		};
 	}
 }

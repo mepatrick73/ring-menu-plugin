@@ -117,6 +117,7 @@ public class RingManager
 			@Override
 			public void hotkeyPressed()
 			{
+				if (!ring.isEnabled()) return;
 				if (ringController.isOpen())
 				{
 					ringController.close();
