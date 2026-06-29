@@ -45,9 +45,23 @@ Click **Save** when you're done.
 
 ### Sub-rings
 
-Click **+ Add Sub-Ring** to create a nested ring. Sub-rings appear as slices in the parent ring and open their own ring when selected. Use the back arrow in the center of the overlay to return to the parent.
+Sub-rings are rings nested inside another ring. When selected in the overlay they open their own ring, and the center button becomes a back arrow to return to the parent.
 
-![Sub-ring navigation](sub-ring-nav.gif)
+To add a sub-ring, open the ring you want to add it to and select the entry it should live under.
+
+![Select the parent entry](subring-select.png)
+
+Click **+ Add Sub-Ring** in the ADD ENTRY section.
+
+![Add Sub-Ring button](subring-button.png)
+
+Enter a name for the sub-ring.
+
+![Name the sub-ring](subring-name.png)
+
+The sub-ring appears nested under the selected entry, ready to have its own entries added.
+
+![Sub-ring added](subring-result.png)
 
 ### The overlay
 
