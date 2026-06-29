@@ -123,16 +123,33 @@ public class RingEditorPanel extends PluginPanel
 	// Cached provider entries — populated when the detail view opens, filtered in-memory on search.
 	private final List<List<RingTreeEntry>> cachedProviderEntries = new ArrayList<>();
 
-	// Pre-built picker rows per active provider; updated only on provider toggle, not on every keystroke.
-	private static final class ProviderPanel
+	// Pool-based picker list: one JScrollPane with header labels and pooled rows.
+	// Rows are rebound (label + action) on every filter/toggle — no component creation after first open.
+	private JPanel             pickerListContainer;
+	private final List<JLabel> providerHeaderLabels = new ArrayList<>();
+
+	private static final class PickerRow
 	{
-		final TrackWidthPanel   listPanel;
-		final List<RingTreeEntry> entries;
-		final List<Component>   rowComponents; // [row0, strut0, row1, strut1, ...]
-		ProviderPanel(TrackWidthPanel lp, List<RingTreeEntry> e, List<Component> rc)
-		{ listPanel = lp; entries = e; rowComponents = rc; }
+		final JPanel   panel;
+		final JLabel   label;
+		final JButton  addBtn;
+		ActionListener boundAction;
+
+		PickerRow(JPanel p, JLabel l, JButton b)
+		{
+			panel = p; label = l; addBtn = b;
+		}
+
+		void bind(RingTreeEntry entry, Runnable onAdd)
+		{
+			label.setText(entry.getLabel());
+			if (boundAction != null) addBtn.removeActionListener(boundAction);
+			boundAction = e -> onAdd.run();
+			addBtn.addActionListener(boundAction);
+			panel.setVisible(true);
+		}
 	}
-	private final List<ProviderPanel> providerPanels = new ArrayList<>();
+	private final List<PickerRow> pickerPool = new ArrayList<>();
 
 	// Name field ref (for save on focus-lost)
 	private JTextField nameField;
@@ -680,7 +697,7 @@ public class RingEditorPanel extends PluginPanel
 			cb.setBackground(BG);
 			cb.setForeground(TEXT_DIM);
 			cb.setFocusPainted(false);
-			cb.addActionListener(e -> populateProvidersContainer());
+			cb.addActionListener(e -> applyProviderFilter());
 			providerToggles.add(cb);
 			toggleRow.add(cb);
 		}
@@ -1085,86 +1102,31 @@ public class RingEditorPanel extends PluginPanel
 	{
 		if (providersWrapper == null) return;
 		providersWrapper.removeAll();
-		providerPanels.clear();
+		providerHeaderLabels.clear();
+		// pickerPool is intentionally not cleared — rows are reused across opens.
 
 		List<RingProvider> providers = ringManager.getProviders();
-
-		List<JPanel> activePanels = new ArrayList<>();
-		for (int i = 0; i < providers.size(); i++)
+		for (RingProvider p : providers)
 		{
-			if (!providerToggles.isEmpty() && !providerToggles.get(i).isSelected()) continue;
-			RingProvider provider = providers.get(i);
-
-			List<RingTreeEntry> allAvailable = i < cachedProviderEntries.size()
-				? cachedProviderEntries.get(i)
-				: Collections.emptyList();
-
-			if (allAvailable.isEmpty()) continue;
-
-			JLabel hdr = new JLabel(provider.getLabel());
+			JLabel hdr = new JLabel(p.getLabel());
 			hdr.setFont(FontManager.getRunescapeSmallFont());
 			hdr.setForeground(ACCENT);
 			hdr.setBorder(new EmptyBorder(6, 4, 4, 0));
-
-			TrackWidthPanel list = new TrackWidthPanel(null);
-			list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-			list.setBackground(BG);
-
-			List<Component> rowComps = new ArrayList<>(allAvailable.size() * 2);
-			for (RingTreeEntry entry : allAvailable)
-			{
-				JPanel row = buildPickerRow(entry);
-				Component strut = Box.createVerticalStrut(1);
-				list.add(row);
-				list.add(strut);
-				rowComps.add(row);
-				rowComps.add(strut);
-			}
-			providerPanels.add(new ProviderPanel(list, allAvailable, rowComps));
-
-			JScrollPane scroll = new JScrollPane(list,
-				JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-			scroll.setBorder(new MatteBorder(1, 1, 1, 1, BG_MED));
-			scroll.setViewportBorder(null);
-			scroll.getViewport().setBackground(BG);
-			scroll.getVerticalScrollBar().setUnitIncrement(8);
-
-			JPanel panel = new JPanel(new BorderLayout());
-			panel.setBackground(BG);
-			panel.add(hdr, BorderLayout.NORTH);
-			panel.add(scroll, BorderLayout.CENTER);
-
-			activePanels.add(panel);
+			providerHeaderLabels.add(hdr);
 		}
 
-		JComponent content;
-		if (activePanels.isEmpty())
-		{
-			JPanel empty = new JPanel();
-			empty.setBackground(BG);
-			content = empty;
-		}
-		else if (activePanels.size() == 1)
-		{
-			content = activePanels.get(0);
-		}
-		else
-		{
-			// Chain from the bottom up so each adjacent pair has its own draggable divider.
-			JComponent bottom = activePanels.get(activePanels.size() - 1);
-			for (int i = activePanels.size() - 2; i >= 0; i--)
-			{
-				JSplitPane sp = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-					activePanels.get(i), bottom);
-				sp.setBorder(null);
-				sp.setDividerSize(6);
-				sp.setResizeWeight(0.5);
-				bottom = sp;
-			}
-			content = bottom;
-		}
+		pickerListContainer = new TrackWidthPanel(null);
+		pickerListContainer.setLayout(new BoxLayout(pickerListContainer, BoxLayout.Y_AXIS));
+		pickerListContainer.setBackground(BG);
 
-		providersWrapper.add(content, BorderLayout.CENTER);
+		JScrollPane scroll = new JScrollPane(pickerListContainer,
+			JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+		scroll.setBorder(new MatteBorder(1, 1, 1, 1, BG_MED));
+		scroll.setViewportBorder(null);
+		scroll.getViewport().setBackground(BG);
+		scroll.getVerticalScrollBar().setUnitIncrement(8);
+
+		providersWrapper.add(scroll, BorderLayout.CENTER);
 		providersWrapper.revalidate();
 		providersWrapper.repaint();
 
@@ -1173,19 +1135,72 @@ public class RingEditorPanel extends PluginPanel
 
 	private void applyProviderFilter()
 	{
-		if (providerPanels.isEmpty()) return;
+		if (pickerListContainer == null) return;
 		String query = pickerSearch != null ? pickerSearch.getText().trim().toLowerCase() : "";
-		for (ProviderPanel pp : providerPanels)
+		List<RingProvider> providers = ringManager.getProviders();
+
+		pickerListContainer.removeAll();
+		int poolIdx = 0;
+
+		for (int i = 0; i < providers.size(); i++)
 		{
-			for (int j = 0; j < pp.entries.size(); j++)
+			if (!providerToggles.isEmpty() && !providerToggles.get(i).isSelected()) continue;
+
+			List<RingTreeEntry> all = i < cachedProviderEntries.size()
+				? cachedProviderEntries.get(i)
+				: Collections.emptyList();
+
+			boolean anyMatch = false;
+			for (RingTreeEntry entry : all)
 			{
-				boolean match = query.isEmpty() || pp.entries.get(j).getLabel().toLowerCase().contains(query);
-				pp.rowComponents.get(j * 2).setVisible(match);
-				pp.rowComponents.get(j * 2 + 1).setVisible(match);
+				if (!query.isEmpty() && !entry.getLabel().toLowerCase().contains(query)) continue;
+
+				if (!anyMatch)
+				{
+					if (i < providerHeaderLabels.size())
+						pickerListContainer.add(providerHeaderLabels.get(i));
+					anyMatch = true;
+				}
+
+				final RingTreeEntry e = entry;
+				PickerRow row = getOrCreatePoolRow(poolIdx++);
+				row.bind(e, () ->
+				{
+					// Copy entry so the same item can be added more than once without
+					// the DnD loop confusing the two references (it uses == for identity).
+					activeList.add(RingTreeEntry.action(e.getLabel(), e.getProviderId(), e.getEntryId()));
+					markDirty();
+					refreshEntries();
+				});
+				pickerListContainer.add(row.panel);
 			}
-			pp.listPanel.revalidate();
-			pp.listPanel.repaint();
 		}
+
+		pickerListContainer.revalidate();
+		pickerListContainer.repaint();
+	}
+
+	private PickerRow getOrCreatePoolRow(int index)
+	{
+		while (pickerPool.size() <= index)
+		{
+			JPanel row = new JPanel(new BorderLayout(4, 0));
+			row.setBackground(BG_DARK);
+			row.setBorder(new EmptyBorder(7, 8, 8, 4));
+			row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 37));
+
+			JLabel lbl = new JLabel();
+			lbl.setFont(FontManager.getRunescapeFont());
+			lbl.setForeground(TEXT);
+
+			JButton add = smallBtn("+");
+			add.setForeground(ACCENT);
+
+			row.add(lbl, BorderLayout.CENTER);
+			row.add(add, BorderLayout.EAST);
+			pickerPool.add(new PickerRow(row, lbl, add));
+		}
+		return pickerPool.get(index);
 	}
 
 	private void scheduleProviderRefresh()
@@ -1198,39 +1213,6 @@ public class RingEditorPanel extends PluginPanel
 			searchDebounceTimer.setRepeats(false);
 			searchDebounceTimer.start();
 		}
-	}
-
-	private void refreshProviders()
-	{
-		if (providersWrapper == null) return;
-		populateProvidersContainer();
-	}
-
-	private JPanel buildPickerRow(RingTreeEntry entry)
-	{
-		JPanel row = new JPanel(new BorderLayout(4, 0));
-		row.setBackground(BG_DARK);
-		row.setBorder(new EmptyBorder(7, 8, 7, 4));
-		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
-
-		JLabel lbl = new JLabel(entry.getLabel());
-		lbl.setFont(FontManager.getRunescapeFont());
-		lbl.setForeground(TEXT);
-
-		JButton add = smallBtn("+");
-		add.setForeground(ACCENT);
-		add.addActionListener(e ->
-		{
-			// Copy the entry so the same provider item can be added more than once without
-			// the DnD loop confusing the two references (it uses == for identity).
-			activeList.add(RingTreeEntry.action(entry.getLabel(), entry.getProviderId(), entry.getEntryId()));
-			markDirty();
-			refreshEntries();
-		});
-
-		row.add(lbl, BorderLayout.CENTER);
-		row.add(add, BorderLayout.EAST);
-		return row;
 	}
 
 	// ── Helpers ─────────────────────────────────────────────────────
