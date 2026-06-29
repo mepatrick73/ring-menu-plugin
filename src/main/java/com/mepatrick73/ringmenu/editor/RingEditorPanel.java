@@ -118,7 +118,6 @@ public class RingEditorPanel extends PluginPanel
 	private JPanel                   providersWrapper;
 	private final List<JCheckBox>    providerToggles = new ArrayList<>();
 	private JTextField pickerSearch;
-	private Timer      searchDebounceTimer;
 
 	// Cached provider entries — populated when the detail view opens, filtered in-memory on search.
 	private final List<List<RingTreeEntry>> cachedProviderEntries = new ArrayList<>();
@@ -714,19 +713,19 @@ public class RingEditorPanel extends PluginPanel
 			@Override
 			public void insertUpdate(DocumentEvent e)
 			{
-				scheduleProviderRefresh();
+				applyProviderFilter();
 			}
 
 			@Override
 			public void removeUpdate(DocumentEvent e)
 			{
-				scheduleProviderRefresh();
+				applyProviderFilter();
 			}
 
 			@Override
 			public void changedUpdate(DocumentEvent e)
 			{
-				scheduleProviderRefresh();
+				applyProviderFilter();
 			}
 		});
 
@@ -1203,19 +1202,7 @@ public class RingEditorPanel extends PluginPanel
 		return pickerPool.get(index);
 	}
 
-	private void scheduleProviderRefresh()
-	{
-		if (searchDebounceTimer != null)
-			searchDebounceTimer.restart();
-		else
-		{
-			searchDebounceTimer = new Timer(150, e -> applyProviderFilter());
-			searchDebounceTimer.setRepeats(false);
-			searchDebounceTimer.start();
-		}
-	}
-
-	// ── Helpers ─────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────
 
 	private JButton smallBtn(String text)
 	{
