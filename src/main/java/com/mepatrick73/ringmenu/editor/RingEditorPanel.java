@@ -25,7 +25,6 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /** JPanel that tells its parent JScrollPane "fill my width to the viewport width." */
 class TrackWidthPanel extends JPanel implements Scrollable
@@ -119,9 +118,21 @@ public class RingEditorPanel extends PluginPanel
 	private JPanel                   providersWrapper;
 	private final List<JCheckBox>    providerToggles = new ArrayList<>();
 	private JTextField pickerSearch;
+	private Timer      searchDebounceTimer;
 
 	// Cached provider entries — populated when the detail view opens, filtered in-memory on search.
 	private final List<List<RingTreeEntry>> cachedProviderEntries = new ArrayList<>();
+
+	// Pre-built picker rows per active provider; updated only on provider toggle, not on every keystroke.
+	private static final class ProviderPanel
+	{
+		final TrackWidthPanel   listPanel;
+		final List<RingTreeEntry> entries;
+		final List<Component>   rowComponents; // [row0, strut0, row1, strut1, ...]
+		ProviderPanel(TrackWidthPanel lp, List<RingTreeEntry> e, List<Component> rc)
+		{ listPanel = lp; entries = e; rowComponents = rc; }
+	}
+	private final List<ProviderPanel> providerPanels = new ArrayList<>();
 
 	// Name field ref (for save on focus-lost)
 	private JTextField nameField;
@@ -669,7 +680,7 @@ public class RingEditorPanel extends PluginPanel
 			cb.setBackground(BG);
 			cb.setForeground(TEXT_DIM);
 			cb.setFocusPainted(false);
-			cb.addActionListener(e -> refreshProviders());
+			cb.addActionListener(e -> populateProvidersContainer());
 			providerToggles.add(cb);
 			toggleRow.add(cb);
 		}
@@ -684,22 +695,11 @@ public class RingEditorPanel extends PluginPanel
 		pickerSearch.getDocument().addDocumentListener(new DocumentListener()
 		{
 			@Override
-			public void insertUpdate(DocumentEvent e)
-			{
-				refreshProviders();
-			}
-
+			public void insertUpdate(DocumentEvent e)  { scheduleProviderRefresh(); }
 			@Override
-			public void removeUpdate(DocumentEvent e)
-			{
-				refreshProviders();
-			}
-
+			public void removeUpdate(DocumentEvent e)  { scheduleProviderRefresh(); }
 			@Override
-			public void changedUpdate(DocumentEvent e)
-			{
-				refreshProviders();
-			}
+			public void changedUpdate(DocumentEvent e) { scheduleProviderRefresh(); }
 		});
 
 		JButton clearBtn = new JButton("×");
@@ -1074,8 +1074,8 @@ public class RingEditorPanel extends PluginPanel
 	{
 		if (providersWrapper == null) return;
 		providersWrapper.removeAll();
+		providerPanels.clear();
 
-		String query = pickerSearch != null ? pickerSearch.getText().trim().toLowerCase() : "";
 		List<RingProvider> providers = ringManager.getProviders();
 
 		List<JPanel> activePanels = new ArrayList<>();
@@ -1088,12 +1088,7 @@ public class RingEditorPanel extends PluginPanel
 				? cachedProviderEntries.get(i)
 				: Collections.emptyList();
 
-			List<RingTreeEntry> available = query.isEmpty() ? allAvailable :
-				allAvailable.stream()
-					.filter(e -> e.getLabel().toLowerCase().contains(query))
-					.collect(Collectors.toList());
-
-			if (available.isEmpty()) continue;
+			if (allAvailable.isEmpty()) continue;
 
 			JLabel hdr = new JLabel(provider.getLabel());
 			hdr.setFont(FontManager.getRunescapeSmallFont());
@@ -1103,11 +1098,18 @@ public class RingEditorPanel extends PluginPanel
 			TrackWidthPanel list = new TrackWidthPanel(null);
 			list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
 			list.setBackground(BG);
-			for (RingTreeEntry entry : available)
+
+			List<Component> rowComps = new ArrayList<>(allAvailable.size() * 2);
+			for (RingTreeEntry entry : allAvailable)
 			{
-				list.add(buildPickerRow(entry));
-				list.add(Box.createVerticalStrut(1));
+				JPanel row = buildPickerRow(entry);
+				Component strut = Box.createVerticalStrut(1);
+				list.add(row);
+				list.add(strut);
+				rowComps.add(row);
+				rowComps.add(strut);
 			}
+			providerPanels.add(new ProviderPanel(list, allAvailable, rowComps));
 
 			JScrollPane scroll = new JScrollPane(list,
 				JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -1154,17 +1156,43 @@ public class RingEditorPanel extends PluginPanel
 		providersWrapper.add(content, BorderLayout.CENTER);
 		providersWrapper.revalidate();
 		providersWrapper.repaint();
+
+		applyProviderFilter();
+	}
+
+	private void applyProviderFilter()
+	{
+		if (providerPanels.isEmpty()) return;
+		String query = pickerSearch != null ? pickerSearch.getText().trim().toLowerCase() : "";
+		for (ProviderPanel pp : providerPanels)
+		{
+			for (int j = 0; j < pp.entries.size(); j++)
+			{
+				boolean match = query.isEmpty() || pp.entries.get(j).getLabel().toLowerCase().contains(query);
+				pp.rowComponents.get(j * 2).setVisible(match);
+				pp.rowComponents.get(j * 2 + 1).setVisible(match);
+			}
+			pp.listPanel.revalidate();
+			pp.listPanel.repaint();
+		}
+	}
+
+	private void scheduleProviderRefresh()
+	{
+		if (searchDebounceTimer != null)
+			searchDebounceTimer.restart();
+		else
+		{
+			searchDebounceTimer = new Timer(150, e -> applyProviderFilter());
+			searchDebounceTimer.setRepeats(false);
+			searchDebounceTimer.start();
+		}
 	}
 
 	private void refreshProviders()
 	{
 		if (providersWrapper == null) return;
 		populateProvidersContainer();
-		if (detailRoot != null)
-		{
-			detailRoot.revalidate();
-			detailRoot.repaint();
-		}
 	}
 
 	private JPanel buildPickerRow(RingTreeEntry entry)
