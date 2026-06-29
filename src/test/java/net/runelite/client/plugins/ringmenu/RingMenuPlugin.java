@@ -1,6 +1,8 @@
 package net.runelite.client.plugins.ringmenu;
 
+import com.google.inject.Provides;
 import com.mepatrick73.ringmenu.RingManager;
+import com.mepatrick73.ringmenu.RingMenuConfig;
 import com.mepatrick73.ringmenu.editor.RingEditorPanel;
 import com.mepatrick73.ringmenu.engine.runtime.RingController;
 import com.mepatrick73.ringmenu.engine.runtime.RingMenuOverlay;
@@ -10,6 +12,7 @@ import net.runelite.api.Client;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.Point;
 import net.runelite.api.ScriptID;
+import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.ScriptPostFired;
@@ -19,6 +22,7 @@ import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.MouseAdapter;
 import net.runelite.client.input.MouseManager;
@@ -115,6 +119,12 @@ public class RingMenuPlugin extends Plugin
 		}
 	};
 
+	@Provides
+	RingMenuConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(RingMenuConfig.class);
+	}
+
 	@Override
 	protected void startUp()
 	{
@@ -164,6 +174,12 @@ public class RingMenuPlugin extends Plugin
 		if (!pendingReapply) return;
 		pendingReapply = false;
 		inventorySetupsProvider.reapplyIfNeeded();
+	}
+
+	@Subscribe
+	public void onClientTick(ClientTick event)
+	{
+		ringManager.updateInputState();
 	}
 
 	@Subscribe

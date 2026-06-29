@@ -1,8 +1,9 @@
 package com.mepatrick73.ringmenu.engine.runtime;
 
+import com.mepatrick73.ringmenu.RingFontType;
+import com.mepatrick73.ringmenu.RingMenuConfig;
 import com.mepatrick73.ringmenu.engine.model.RingEntry;
 import net.runelite.api.Client;
-import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -86,12 +87,16 @@ public class RingMenuOverlay extends Overlay
 
 	private final Client client;
 	private final RingController ringController;
+	private final RingMenuConfig config;
 
 	// Written by setCenter() (EDT); read by render() (client thread). Volatile for visibility.
 	private volatile Point center = null;
 
-	private final Font labelFont;
-	private final Font arrowFont;
+	// Rebuilt by refreshFonts() when the configured font type or size changes.
+	private Font labelFont;
+	private Font arrowFont;
+	private RingFontType cachedFontType;
+	private int          cachedFontSize = -1;
 
 	// Per-slice geometry cache — recomputed only when the number of slices changes.
 	// Eliminates sin/cos calls for static geometry on every frame.
@@ -105,14 +110,30 @@ public class RingMenuOverlay extends Overlay
 	private int      maxLabelWidth;    // max pixel width for a label before truncation
 
 	@Inject
-	public RingMenuOverlay(Client client, RingController ringController)
+	public RingMenuOverlay(Client client, RingController ringController, RingMenuConfig config)
 	{
 		this.client = client;
 		this.ringController = ringController;
+		this.config = config;
 		setLayer(OverlayLayer.ABOVE_WIDGETS);
 		setPosition(OverlayPosition.DYNAMIC);
-		labelFont = FontManager.getRunescapeFont().deriveFont(17f);
-		arrowFont = FontManager.getRunescapeBoldFont().deriveFont(26f);
+		refreshFonts();
+	}
+
+	// Rebuilds the label and arrow fonts from config when the type or size changes. The arrow glyph
+	// scales with the label size, preserving the original 26:17 ratio.
+	private void refreshFonts()
+	{
+		RingFontType type = config.fontType();
+		int size = config.fontSize();
+		if (type == cachedFontType && size == cachedFontSize)
+		{
+			return;
+		}
+		cachedFontType = type;
+		cachedFontSize = size;
+		labelFont = type.getFont(size);
+		arrowFont = type.getFont(Math.round(size * (26f / 17f)));
 	}
 
 	private void rebuildSliceCache(int n)
@@ -122,7 +143,11 @@ public class RingMenuOverlay extends Overlay
 		sliceSize  = 2 * Math.PI / n;
 		sliceDeg   = (int) Math.toDegrees(sliceSize);
 		int midR   = (INNER_RADIUS + RING_RADIUS) / 2;
-		maxLabelWidth = (int)(2 * midR * Math.sin(Math.PI / n) * 0.80);
+		// Chord width of one slice at the label's radius. For n == 1 the slice spans the whole
+		// circle (sin(pi) == 0), so fall back to the horizontal room inside the ring at that height.
+		maxLabelWidth = n == 1
+			? (int)(2 * Math.sqrt((double) RING_RADIUS * RING_RADIUS - midR * midR) * 0.80)
+			: (int)(2 * midR * Math.sin(Math.PI / n) * 0.80);
 		sliceAngles = new double[n];
 		divDx1 = new int[n]; divDy1 = new int[n];
 		divDx2 = new int[n]; divDy2 = new int[n];
@@ -215,6 +240,8 @@ public class RingMenuOverlay extends Overlay
 	{
 		Point c = center;
 		if (!ringController.isOpen() || c == null) return null;
+
+		refreshFonts();
 
 		List<RingEntry> entries = ringController.currentEntries();
 		int n  = entries.size();
