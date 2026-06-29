@@ -5,6 +5,7 @@ import com.mepatrick73.ringmenu.RingManager;
 import com.mepatrick73.ringmenu.data.RingDefinition;
 import com.mepatrick73.ringmenu.data.RingTreeEntry;
 import com.mepatrick73.ringmenu.providers.RingProvider;
+import net.runelite.client.config.Keybind;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
@@ -15,12 +16,16 @@ import javax.swing.border.Border;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.MatteBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.*;
+import java.awt.event.*;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.IdentityHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /** JPanel that tells its parent JScrollPane "fill my width to the viewport width." */
 class TrackWidthPanel extends JPanel implements Scrollable
@@ -51,9 +56,17 @@ public class RingEditorPanel extends PluginPanel
 	private final RingManager ringManager;
 	private final Gson         gson;
 
-	// Cards
-	private final CardLayout cards     = new CardLayout();
-	private final JPanel     cardPanel = new JPanel(cards);
+	// Cards — custom layout reports only the VISIBLE card's preferred size so
+	// the detail card's large JScrollPane defaults don't pollute the list view.
+	private final CardLayout cards = new CardLayout() {
+		@Override public Dimension preferredLayoutSize(Container parent) {
+			for (Component c : parent.getComponents()) {
+				if (c.isVisible()) return c.getPreferredSize();
+			}
+			return super.preferredLayoutSize(parent);
+		}
+	};
+	private final JPanel cardPanel = new JPanel(cards);
 	private final JPanel     ringRows  = new JPanel();
 
 	// Detail state
@@ -62,21 +75,21 @@ public class RingEditorPanel extends PluginPanel
 	private boolean        dirty;
 	private JButton        saveBtn;
 	private JPanel         detailRoot;
-	private JSplitPane     splitPane;
 
 	// Tree state
-	// Identity-based: @Data generates hashCode() from children, so adding a child
-	// changes the hash and breaks a regular HashSet lookup. IdentityHashMap uses == instead.
-	private final Set<RingTreeEntry>  expandedRings = Collections.newSetFromMap(new IdentityHashMap<>());
+	private final Set<RingTreeEntry>  expandedRings = new HashSet<>();
 	private       List<RingTreeEntry> activeList;
 
 	// Entries container (custom paint for drop indicator)
 	private JPanel entriesContainer;
 
 	// Providers
-	private JPanel     providersContainer;
-	private final List<JCheckBox> providerToggles = new ArrayList<>();
+	private JPanel                   providersWrapper;
+	private final List<JCheckBox>    providerToggles = new ArrayList<>();
 	private JTextField pickerSearch;
+
+	// Cached provider entries — populated when the detail view opens, filtered in-memory on search.
+	private final List<List<RingTreeEntry>> cachedProviderEntries = new ArrayList<>();
 
 	// Name field ref (for save on focus-lost)
 	private JTextField nameField;
@@ -112,23 +125,13 @@ public class RingEditorPanel extends PluginPanel
 
 	// ── Lifecycle ──────────────────────────────────────────────────
 
-	@Override
-	public Dimension getPreferredSize()
-	{
-		for (Container p = getParent(); p != null; p = p.getParent())
-		{
-			if (p instanceof JViewport)
-			{
-				int h = p.getHeight();
-				if (h > 0) return new Dimension(PANEL_WIDTH, h);
-			}
-		}
-		return new Dimension(PANEL_WIDTH, 600);
-	}
-
 	@Inject
 	public RingEditorPanel(RingManager ringManager, Gson gson)
 	{
+		// super(false): skip PluginPanel's internal scroll pane and BORDER_PADDING,
+		// which are the source of the 4-sided white outline. ClientUI fills us to the
+		// full sidebar size, so we don't need getPreferredSize() overrides either.
+		super(false);
 		this.ringManager = ringManager;
 		this.gson        = gson;
 		setLayout(new BorderLayout());
@@ -160,6 +163,7 @@ public class RingEditorPanel extends PluginPanel
 		JScrollPane scroll = new JScrollPane(ringRows,
 			JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 		scroll.setBorder(null);
+		scroll.setViewportBorder(null);
 		scroll.getViewport().setBackground(BG);
 		root.add(scroll, BorderLayout.CENTER);
 
@@ -183,6 +187,11 @@ public class RingEditorPanel extends PluginPanel
 
 	public void rebuildRingRows()
 	{
+		if (!SwingUtilities.isEventDispatchThread())
+		{
+			SwingUtilities.invokeLater(this::rebuildRingRows);
+			return;
+		}
 		ringRows.removeAll();
 		for (RingDefinition ring : ringManager.getRings())
 		{
@@ -198,8 +207,8 @@ public class RingEditorPanel extends PluginPanel
 		JPanel row = new JPanel(new BorderLayout(4, 0));
 		row.setBackground(BG_DARK);
 		row.setBorder(new CompoundBorder(
-			new MatteBorder(0, 3, 0, 0, ACCENT), new EmptyBorder(8, 8, 8, 6)));
-		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+			new MatteBorder(0, 3, 0, 0, ACCENT), new EmptyBorder(5, 8, 5, 6)));
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 46));
 		row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
 		JLabel name = new JLabel(ring.getName());
@@ -216,6 +225,17 @@ public class RingEditorPanel extends PluginPanel
 		labels.add(name);
 		labels.add(hk);
 
+		JButton pen = smallBtn("✎");
+		pen.setForeground(TEXT_DIM);
+		pen.addActionListener(e -> {
+			String newName = (String) JOptionPane.showInputDialog(
+				this, null, "Rename Ring", JOptionPane.PLAIN_MESSAGE, null, null, ring.getName());
+			if (newName == null || newName.trim().isEmpty()) return;
+			ring.setName(newName.trim());
+			ringManager.save();
+			rebuildRingRows();
+		});
+
 		JButton del = smallBtn("×");
 		del.setForeground(TEXT_DIM);
 		del.addActionListener(e -> {
@@ -227,13 +247,19 @@ public class RingEditorPanel extends PluginPanel
 			rebuildRingRows();
 		});
 
+		JPanel actions = new JPanel();
+		actions.setLayout(new BoxLayout(actions, BoxLayout.X_AXIS));
+		actions.setBackground(BG_DARK);
+		actions.add(pen);
+		actions.add(del);
+
 		row.add(labels, BorderLayout.CENTER);
-		row.add(del, BorderLayout.EAST);
-		row.addMouseListener(new java.awt.event.MouseAdapter()
+		row.add(actions, BorderLayout.EAST);
+		row.addMouseListener(new MouseAdapter()
 		{
-			@Override public void mouseClicked(java.awt.event.MouseEvent e) { selectRing(ring); }
-			@Override public void mouseEntered(java.awt.event.MouseEvent e) { row.setBackground(BG_MED); labels.setBackground(BG_MED); del.setBackground(BG_MED); }
-			@Override public void mouseExited(java.awt.event.MouseEvent e)  { row.setBackground(BG_DARK); labels.setBackground(BG_DARK); del.setBackground(BG_DARK); }
+			@Override public void mouseClicked(MouseEvent e) { selectRing(ring); }
+			@Override public void mouseEntered(MouseEvent e) { row.setBackground(BG_MED); labels.setBackground(BG_MED); actions.setBackground(BG_MED); pen.setBackground(BG_MED); del.setBackground(BG_MED); }
+			@Override public void mouseExited(MouseEvent e)  { row.setBackground(BG_DARK); labels.setBackground(BG_DARK); actions.setBackground(BG_DARK); pen.setBackground(BG_DARK); del.setBackground(BG_DARK); }
 		});
 		return row;
 	}
@@ -269,6 +295,11 @@ public class RingEditorPanel extends PluginPanel
 
 	private void populateDetail()
 	{
+		// Refresh provider entry cache so search filtering is cheap (no getAvailableEntries() per keystroke).
+		cachedProviderEntries.clear();
+		for (RingProvider p : ringManager.getProviders())
+			cachedProviderEntries.add(p.getAvailableEntries());
+
 		detailRoot.removeAll();
 
 		JPanel fixedNorth = new JPanel();
@@ -339,8 +370,10 @@ public class RingEditorPanel extends PluginPanel
 		JScrollPane entriesScroll = new JScrollPane(entriesContainer,
 			JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 		entriesScroll.setBorder(new MatteBorder(1, 1, 1, 1, BG_MED));
+		entriesScroll.setViewportBorder(null);
 		entriesScroll.getViewport().setBackground(BG);
 		entriesScroll.getVerticalScrollBar().setUnitIncrement(8);
+		entriesScroll.setPreferredSize(new Dimension(0, MIN_ENTRIES_ROWS * ROW_H + 8));
 
 		JPanel entriesWrapper = new JPanel(new BorderLayout());
 		entriesWrapper.setBackground(BG);
@@ -349,23 +382,12 @@ public class RingEditorPanel extends PluginPanel
 		entriesWrapper.add(entriesScroll, BorderLayout.CENTER);
 		entriesWrapper.setMinimumSize(new Dimension(0, MIN_ENTRIES_ROWS * ROW_H + 24));
 
-		providersContainer = new TrackWidthPanel(null);
-		providersContainer.setLayout(new BoxLayout(providersContainer, BoxLayout.Y_AXIS));
-		providersContainer.setBackground(BG);
-		populateProvidersContainer();
-
-		JScrollPane providersScroll = new JScrollPane(providersContainer,
-			JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-		providersScroll.setBorder(new MatteBorder(1, 1, 1, 1, BG_MED));
-		providersScroll.getViewport().setBackground(BG);
-		providersScroll.getVerticalScrollBar().setUnitIncrement(8);
-
-		JPanel providersWrapper = new JPanel(new BorderLayout());
+		providersWrapper = new JPanel(new BorderLayout());
 		providersWrapper.setBackground(BG);
 		providersWrapper.setBorder(new EmptyBorder(0, 6, 6, 6));
-		providersWrapper.add(providersScroll, BorderLayout.CENTER);
+		populateProvidersContainer();
 
-		splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, entriesWrapper, providersWrapper);
+		JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, entriesWrapper, providersWrapper);
 		splitPane.setResizeWeight(0.0);
 		splitPane.setDividerSize(6);
 		splitPane.setBorder(null);
@@ -476,9 +498,9 @@ public class RingEditorPanel extends PluginPanel
 		nameField.setCaretColor(TEXT);
 		nameField.setBorder(new EmptyBorder(4, 6, 4, 6));
 		nameField.addActionListener(e -> saveRingName());
-		nameField.addFocusListener(new java.awt.event.FocusAdapter()
+		nameField.addFocusListener(new FocusAdapter()
 		{
-			@Override public void focusLost(java.awt.event.FocusEvent e) { saveRingName(); }
+			@Override public void focusLost(FocusEvent e) { saveRingName(); }
 		});
 		row.add(lbl, BorderLayout.WEST);
 		row.add(nameField, BorderLayout.CENTER);
@@ -510,11 +532,11 @@ public class RingEditorPanel extends PluginPanel
 		btn.addActionListener(e -> {
 			btn.setText("Press a key…");
 			btn.requestFocusInWindow();
-			btn.addKeyListener(new java.awt.event.KeyAdapter()
+			btn.addKeyListener(new KeyAdapter()
 			{
-				@Override public void keyPressed(java.awt.event.KeyEvent ke)
+				@Override public void keyPressed(KeyEvent ke)
 				{
-					net.runelite.client.config.Keybind kb = new net.runelite.client.config.Keybind(ke.getKeyCode(), ke.getModifiersEx());
+					Keybind kb = new Keybind(ke.getKeyCode(), ke.getModifiersEx());
 					selectedRing.setHotkey(kb);
 					markDirty();
 					btn.setText(kb.toString());
@@ -592,11 +614,11 @@ public class RingEditorPanel extends PluginPanel
 		pickerSearch.setCaretColor(TEXT);
 		pickerSearch.setBorder(new EmptyBorder(4, 6, 4, 6));
 		pickerSearch.putClientProperty("JTextField.placeholderText", "Filter…");
-		pickerSearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener()
+		pickerSearch.getDocument().addDocumentListener(new DocumentListener()
 		{
-			@Override public void insertUpdate(javax.swing.event.DocumentEvent e)  { refreshProviders(); }
-			@Override public void removeUpdate(javax.swing.event.DocumentEvent e)  { refreshProviders(); }
-			@Override public void changedUpdate(javax.swing.event.DocumentEvent e) { refreshProviders(); }
+			@Override public void insertUpdate(DocumentEvent e)  { refreshProviders(); }
+			@Override public void removeUpdate(DocumentEvent e)  { refreshProviders(); }
+			@Override public void changedUpdate(DocumentEvent e) { refreshProviders(); }
 		});
 
 		JButton clearBtn = new JButton("×");
@@ -658,9 +680,9 @@ public class RingEditorPanel extends PluginPanel
 		lbl.setFont(FontManager.getRunescapeBoldFont());
 		lbl.setForeground(isActive ? ACCENT : TEXT_DIM);
 		lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-		lbl.addMouseListener(new java.awt.event.MouseAdapter()
+		lbl.addMouseListener(new MouseAdapter()
 		{
-			@Override public void mouseClicked(java.awt.event.MouseEvent e)
+			@Override public void mouseClicked(MouseEvent e)
 			{
 				activeList = selectedRing.getEntries();
 				refreshEntries();
@@ -727,10 +749,10 @@ public class RingEditorPanel extends PluginPanel
 		handle.setPreferredSize(new Dimension(DRAG_HANDLE_W, 0));
 		handle.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
 
-		handle.addMouseListener(new java.awt.event.MouseAdapter()
+		handle.addMouseListener(new MouseAdapter()
 		{
 			@Override
-			public void mousePressed(java.awt.event.MouseEvent e)
+			public void mousePressed(MouseEvent e)
 			{
 				dragEntry       = entry;
 				dragSourceList  = parentList;
@@ -740,17 +762,17 @@ public class RingEditorPanel extends PluginPanel
 			}
 
 			@Override
-			public void mouseReleased(java.awt.event.MouseEvent e)
+			public void mouseReleased(MouseEvent e)
 			{
 				if (dragging) commitDrop();
 				clearDragState();
 			}
 		});
 
-		handle.addMouseMotionListener(new java.awt.event.MouseMotionAdapter()
+		handle.addMouseMotionListener(new MouseMotionAdapter()
 		{
 			@Override
-			public void mouseDragged(java.awt.event.MouseEvent e)
+			public void mouseDragged(MouseEvent e)
 			{
 				if (!dragging)
 				{
@@ -779,10 +801,10 @@ public class RingEditorPanel extends PluginPanel
 			lbl = new JLabel("└ " + arrow + entry.getLabel());
 			lbl.setForeground(isActiveParent ? ACCENT : textColor);
 			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-			lbl.addMouseListener(new java.awt.event.MouseAdapter()
+			lbl.addMouseListener(new MouseAdapter()
 			{
 				@Override
-				public void mouseClicked(java.awt.event.MouseEvent e)
+				public void mouseClicked(MouseEvent e)
 				{
 					if (e.getX() <= FontManager.getRunescapeFont().getSize() * 2)
 					{
@@ -824,7 +846,31 @@ public class RingEditorPanel extends PluginPanel
 		});
 
 		content.add(lbl, BorderLayout.CENTER);
-		content.add(del, BorderLayout.EAST);
+
+		if (entry.isSubRing())
+		{
+			JButton pen = smallBtn("✎");
+			pen.setForeground(TEXT_DIM);
+			pen.setBackground(BG_DARK);
+			pen.addActionListener(e -> {
+				String newLabel = (String) JOptionPane.showInputDialog(
+					this, null, "Rename Sub-Ring", JOptionPane.PLAIN_MESSAGE, null, null, entry.getLabel());
+				if (newLabel == null || newLabel.trim().isEmpty()) return;
+				entry.setLabel(newLabel.trim());
+				markDirty();
+				refreshEntries();
+			});
+			JPanel entryActions = new JPanel();
+			entryActions.setLayout(new BoxLayout(entryActions, BoxLayout.X_AXIS));
+			entryActions.setBackground(BG_DARK);
+			entryActions.add(pen);
+			entryActions.add(del);
+			content.add(entryActions, BorderLayout.EAST);
+		}
+		else
+		{
+			content.add(del, BorderLayout.EAST);
+		}
 
 		row.add(handle, BorderLayout.WEST);
 		row.add(content, BorderLayout.CENTER);
@@ -943,28 +989,33 @@ public class RingEditorPanel extends PluginPanel
 
 	private void populateProvidersContainer()
 	{
-		providersContainer.removeAll();
+		if (providersWrapper == null) return;
+		providersWrapper.removeAll();
+
 		String query = pickerSearch != null ? pickerSearch.getText().trim().toLowerCase() : "";
 		List<RingProvider> providers = ringManager.getProviders();
 
+		List<JPanel> activePanels = new ArrayList<>();
 		for (int i = 0; i < providers.size(); i++)
 		{
 			if (!providerToggles.isEmpty() && !providerToggles.get(i).isSelected()) continue;
 			RingProvider provider = providers.get(i);
 
-			List<RingTreeEntry> available = provider.getAvailableEntries();
-			if (!query.isEmpty())
-				available = available.stream()
+			List<RingTreeEntry> allAvailable = i < cachedProviderEntries.size()
+				? cachedProviderEntries.get(i)
+				: Collections.emptyList();
+
+			List<RingTreeEntry> available = query.isEmpty() ? allAvailable :
+				allAvailable.stream()
 					.filter(e -> e.getLabel().toLowerCase().contains(query))
-					.collect(java.util.stream.Collectors.toList());
+					.collect(Collectors.toList());
+
 			if (available.isEmpty()) continue;
 
 			JLabel hdr = new JLabel(provider.getLabel());
 			hdr.setFont(FontManager.getRunescapeSmallFont());
 			hdr.setForeground(ACCENT);
-			hdr.setBorder(new EmptyBorder(10, 4, 4, 0));
-			hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
-			providersContainer.add(hdr);
+			hdr.setBorder(new EmptyBorder(6, 4, 4, 0));
 
 			TrackWidthPanel list = new TrackWidthPanel(null);
 			list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
@@ -975,39 +1026,56 @@ public class RingEditorPanel extends PluginPanel
 				list.add(Box.createVerticalStrut(1));
 			}
 
-			final int cap = 150;
 			JScrollPane scroll = new JScrollPane(list,
-				JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER)
-			{
-				@Override public Dimension getPreferredSize()
-				{
-					return new Dimension(super.getPreferredSize().width,
-						Math.min(list.getPreferredSize().height, cap));
-				}
-				@Override public Dimension getMaximumSize()
-				{
-					return new Dimension(Integer.MAX_VALUE, cap);
-				}
-			};
+				JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 			scroll.setBorder(new MatteBorder(1, 1, 1, 1, BG_MED));
+			scroll.setViewportBorder(null);
 			scroll.getViewport().setBackground(BG);
 			scroll.getVerticalScrollBar().setUnitIncrement(8);
 
-			JPanel scrollWrap = new JPanel(new BorderLayout());
-			scrollWrap.setBackground(BG);
-			scrollWrap.setBorder(new EmptyBorder(0, 4, 6, 4));
-			scrollWrap.setAlignmentX(Component.LEFT_ALIGNMENT);
-			scrollWrap.add(scroll, BorderLayout.CENTER);
-			providersContainer.add(scrollWrap);
+			JPanel panel = new JPanel(new BorderLayout());
+			panel.setBackground(BG);
+			panel.add(hdr, BorderLayout.NORTH);
+			panel.add(scroll, BorderLayout.CENTER);
+
+			activePanels.add(panel);
 		}
 
-		providersContainer.revalidate();
-		providersContainer.repaint();
+		JComponent content;
+		if (activePanels.isEmpty())
+		{
+			JPanel empty = new JPanel();
+			empty.setBackground(BG);
+			content = empty;
+		}
+		else if (activePanels.size() == 1)
+		{
+			content = activePanels.get(0);
+		}
+		else
+		{
+			// Chain from the bottom up so each adjacent pair has its own draggable divider.
+			JComponent bottom = activePanels.get(activePanels.size() - 1);
+			for (int i = activePanels.size() - 2; i >= 0; i--)
+			{
+				JSplitPane sp = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+					activePanels.get(i), bottom);
+				sp.setBorder(null);
+				sp.setDividerSize(6);
+				sp.setResizeWeight(0.5);
+				bottom = sp;
+			}
+			content = bottom;
+		}
+
+		providersWrapper.add(content, BorderLayout.CENTER);
+		providersWrapper.revalidate();
+		providersWrapper.repaint();
 	}
 
 	private void refreshProviders()
 	{
-		if (providersContainer == null) return;
+		if (providersWrapper == null) return;
 		populateProvidersContainer();
 		if (detailRoot != null) { detailRoot.revalidate(); detailRoot.repaint(); }
 	}
@@ -1026,7 +1094,9 @@ public class RingEditorPanel extends PluginPanel
 		JButton add = smallBtn("+");
 		add.setForeground(ACCENT);
 		add.addActionListener(e -> {
-			activeList.add(entry);
+			// Copy the entry so the same provider item can be added more than once without
+			// the DnD loop confusing the two references (it uses == for identity).
+			activeList.add(RingTreeEntry.action(entry.getLabel(), entry.getProviderId(), entry.getEntryId()));
 			markDirty();
 			refreshEntries();
 		});

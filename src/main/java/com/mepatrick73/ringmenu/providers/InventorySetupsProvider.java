@@ -1,8 +1,8 @@
 package com.mepatrick73.ringmenu.providers;
 
 import com.google.common.hash.Hashing;
+import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.mepatrick73.ringmenu.data.RingTreeEntry;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.config.ConfigManager;
@@ -19,15 +19,20 @@ public class InventorySetupsProvider implements RingProvider
 {
 	public static final String ID = "inventorySetups";
 
-	private static final String IS_CONFIG_GROUP  = "inventorysetups";
-	private static final String SETUPS_V3_PREFIX  = "setupsV3_";
+	private static final String IS_CONFIG_GROUP     = "inventorysetups";
+	// Key prefix matches InventorySetups plugin v3 config schema. If that plugin migrates
+	// to a v4 key, this prefix must be updated to match.
+	private static final String SETUPS_V3_PREFIX    = "setupsV3_";
+	// Murmur3-128 hash prefix used by InventorySetups to name its bank-tag layouts.
+	// Guava Hashing is a transitive dependency from runelite-client — not declared in build.gradle.
 	private static final String LAYOUT_PREFIX_MARKER = "_invsetup_";
 
 	@Inject private ConfigManager configManager;
 	@Inject private BankTagsService bankTagsService;
+	@Inject private Gson gson;
 
-	private String activeSetupName;
-	private String activeTagName;
+	private volatile String activeSetupName;
+	private volatile String activeTagName;
 
 	@Override
 	public String getId() { return ID; }
@@ -49,7 +54,7 @@ public class InventorySetupsProvider implements RingProvider
 			if (json == null) continue;
 			try
 			{
-				JsonObject obj = new JsonParser().parse(json).getAsJsonObject();
+				JsonObject obj = gson.fromJson(json, JsonObject.class);
 				String name = obj.get("name").getAsString();
 				entries.add(RingTreeEntry.action(name, ID, name));
 			}

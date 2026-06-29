@@ -12,20 +12,22 @@ import java.util.List;
 @Singleton
 public class RingController
 {
+    // Mutated on the AWT EDT (mouse listener, hotkey listener) and read on the client thread
+    // in render(). All public methods are synchronized to prevent data races.
     private final Deque<RingNode> stack = new ArrayDeque<>();
 
-    public void open(RingNode root)
+    public synchronized void open(RingNode root)
     {
         stack.clear();
         stack.push(root);
     }
 
-    public void pushRing(RingNode node)
+    public synchronized void pushRing(RingNode node)
     {
         stack.push(node);
     }
 
-    public void back()
+    public synchronized void back()
     {
         if (stack.size() > 1)
         {
@@ -33,22 +35,22 @@ public class RingController
         }
     }
 
-    public void close()
+    public synchronized void close()
     {
         stack.clear();
     }
 
-    public boolean isOpen()
+    public synchronized boolean isOpen()
     {
         return !stack.isEmpty();
     }
 
-    public boolean canGoBack()
+    public synchronized boolean canGoBack()
     {
         return stack.size() > 1;
     }
 
-    public List<RingEntry> currentEntries()
+    public synchronized List<RingEntry> currentEntries()
     {
         if (stack.isEmpty())
         {

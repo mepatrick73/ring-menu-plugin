@@ -1,6 +1,8 @@
 package com.mepatrick73.ringmenu.data;
 
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.Setter;
 import net.runelite.client.config.Keybind;
 
 import java.util.ArrayList;
@@ -14,7 +16,10 @@ public class RingDefinition
 	private String name;
 	// Stored as plain ints so Gson can (de)serialize them.
 	// Keybind has final fields + no no-args constructor, which breaks Gson on Java 17+.
+	// Use setHotkey(Keybind) to write these fields — raw setters are suppressed.
+	@Setter(AccessLevel.NONE)
 	private int hotkeyCode      = 0;
+	@Setter(AccessLevel.NONE)
 	private int hotkeyModifiers = 0;
 	private List<RingTreeEntry> entries;
 
@@ -40,6 +45,12 @@ public class RingDefinition
 	public boolean hasHotkey()
 	{
 		return !getHotkey().equals(Keybind.NOT_SET);
+	}
+
+	public List<RingTreeEntry> getEntries()
+	{
+		if (entries == null) entries = new ArrayList<>();
+		return entries;
 	}
 
 	public static RingDefinition create(String name)

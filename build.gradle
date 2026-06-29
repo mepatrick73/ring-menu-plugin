@@ -36,7 +36,7 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.register('run', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
-	mainClass = pluginMainClass
+	mainClass = 'net.runelite.client.RuneLite'
 
 	jvmArgs "-ea"
 	args "--developer-mode", "--debug"

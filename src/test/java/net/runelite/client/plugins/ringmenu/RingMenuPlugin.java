@@ -1,5 +1,6 @@
-package com.mepatrick73.ringmenu;
+package net.runelite.client.plugins.ringmenu;
 
+import com.mepatrick73.ringmenu.RingManager;
 import com.mepatrick73.ringmenu.editor.RingEditorPanel;
 import com.mepatrick73.ringmenu.engine.runtime.RingController;
 import com.mepatrick73.ringmenu.engine.runtime.RingMenuOverlay;
@@ -34,6 +35,9 @@ import javax.swing.SwingUtilities;
 import java.awt.event.MouseEvent;
 import java.util.List;
 
+// Test-only entry point. RuneLite's scanner requires getSuperclass() == Plugin.class,
+// so a bridge class extending com.mepatrick73.ringmenu.RingMenuPlugin cannot work.
+// All logic delegates to the shared supporting classes in com.mepatrick73.ringmenu.*.
 @PluginDependency(BankTagsPlugin.class)
 @PluginDescriptor(
 	name = "Ring Menu",
@@ -55,10 +59,7 @@ public class RingMenuPlugin extends Plugin
 
 	private NavigationButton navButton;
 
-	// False from WidgetLoaded until the first BANKMAIN_FINISHBUILDING of this bank session.
-	// Prevents VarbitChanged from misreading server-sent varbit resets on bank open as user navigation.
 	private boolean bankWasOpen;
-	// Set by WidgetLoaded; consumed by onGameTick, which is a safe point to call openBankTag().
 	private boolean pendingReapply;
 
 	private final MouseAdapter mouseListener = new MouseAdapter()
@@ -117,7 +118,7 @@ public class RingMenuPlugin extends Plugin
 
 		navButton = NavigationButton.builder()
 			.tooltip("Ring Menu")
-			.icon(ImageUtil.loadImageResource(getClass(), "ring_icon.png"))
+			.icon(ImageUtil.loadImageResource(com.mepatrick73.ringmenu.RingMenuPlugin.class, "ring_icon.png"))
 			.priority(6)
 			.panel(editorPanel)
 			.build();
@@ -134,7 +135,6 @@ public class RingMenuPlugin extends Plugin
 		if (navButton != null) clientToolbar.removeNavigation(navButton);
 	}
 
-	// WidgetLoaded fires before BANKMAIN_FINISHBUILDING when the bank opens.
 	@Subscribe
 	public void onWidgetLoaded(WidgetLoaded event)
 	{
@@ -145,7 +145,6 @@ public class RingMenuPlugin extends Plugin
 		}
 	}
 
-	// GameTick is outside script execution — safe to call openBankTag() here.
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
@@ -154,8 +153,6 @@ public class RingMenuPlugin extends Plugin
 		inventorySetupsProvider.reapplyIfNeeded();
 	}
 
-	// BANK_CURRENTTAB changes whenever the user switches bank tabs.
-	// If the resulting tab is not our setup's tag, the user navigated away.
 	@Subscribe
 	public void onVarbitChanged(VarbitChanged event)
 	{

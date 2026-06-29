@@ -1,11 +1,15 @@
 package com.mepatrick73.ringmenu.data;
 
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
 
 import java.util.ArrayList;
 import java.util.List;
 
-@Data
+@Getter
+@Setter
+@ToString
 public class RingTreeEntry
 {
 	public enum Type { ACTION, SUB_RING }
@@ -19,6 +23,12 @@ public class RingTreeEntry
 
 	// SUB_RING fields
 	private List<RingTreeEntry> children;
+
+	@Override
+	public boolean equals(Object o) { return this == o; }
+
+	@Override
+	public int hashCode() { return System.identityHashCode(this); }
 
 	public static RingTreeEntry action(String label, String providerId, String entryId)
 	{

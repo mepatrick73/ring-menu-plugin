@@ -10,6 +10,7 @@ import com.mepatrick73.ringmenu.engine.runtime.RingController;
 import com.mepatrick73.ringmenu.engine.runtime.RingMenuOverlay;
 import com.mepatrick73.ringmenu.providers.RingProvider;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.util.HotkeyListener;
@@ -34,7 +35,7 @@ public class RingManager
 	@Inject private KeyManager keyManager;
 	@Inject private RingController ringController;
 	@Inject private RingMenuOverlay overlay;
-	@Inject private net.runelite.api.Client client;
+	@Inject private Client client;
 	@Inject private Gson gson;
 
 	private final List<RingDefinition> rings     = new ArrayList<>();
@@ -55,7 +56,12 @@ public class RingManager
 			{
 				Type type = new TypeToken<List<RingDefinition>>(){}.getType();
 				List<RingDefinition> loaded = gson.fromJson(json, type);
-				if (loaded != null) rings.addAll(loaded);
+				if (loaded != null)
+				{
+					// Gson bypasses constructors; normalize any null entries lists from old/corrupt data.
+					loaded.forEach(r -> r.getEntries());
+					rings.addAll(loaded);
+				}
 			}
 			catch (Exception e)
 			{
@@ -134,9 +140,9 @@ public class RingManager
 				RingProvider provider = findProvider(entry.getProviderId());
 				if (provider == null) continue;
 				Runnable action = provider.buildAction(entry);
+				// RingAction.onSelect() already calls controller.close() before invoking the action.
 				node.getChildren().add(new RingAction(entry.getLabel(), () ->
 				{
-					ringController.close();
 					providers.forEach(RingProvider::deactivate);
 					action.run();
 				}));

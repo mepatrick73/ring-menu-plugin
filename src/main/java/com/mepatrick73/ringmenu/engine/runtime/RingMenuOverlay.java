@@ -2,6 +2,7 @@ package com.mepatrick73.ringmenu.engine.runtime;
 
 import com.mepatrick73.ringmenu.engine.model.RingEntry;
 import net.runelite.api.Client;
+import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -19,6 +20,8 @@ public class RingMenuOverlay extends Overlay
     private static final int CENTER_R = 42;
     static final int FULL_R = RING_RADIUS + 18;
 
+    // ── Static color palette ──────────────────────────────────────────────
+
     private static final Color BG          = new Color(20, 20, 20);
     private static final Color SLICE_HOT   = new Color(65, 38, 4);
     private static final Color DIVIDER     = new Color(58, 58, 58);
@@ -27,9 +30,69 @@ public class RingMenuOverlay extends Overlay
     private static final Color TEXT_HOT    = Color.WHITE;
     private static final Color SHADOW      = new Color(0, 0, 0, 180);
 
+    // Center fill: four states (canBack × hoverCenter)
+    private static final Color CENTER_CLOSE_HOT  = new Color(170, 18, 18);
+    private static final Color CENTER_CLOSE_COLD = new Color(110, 12, 12);
+    private static final Color CENTER_BACK_HOT   = new Color(195, 96, 0);
+    private static final Color CENTER_BACK_COLD  = new Color(55, 55, 55);
+
+    // Inner circle border: four states (canBack × hoverCenter)
+    private static final Color INNER_CLOSE_HOT  = new Color(230, 60, 60);
+    private static final Color INNER_CLOSE_COLD = new Color(155, 35, 35);
+    private static final Color INNER_BACK_HOT   = new Color(255, 168, 40);
+    private static final Color INNER_BACK_COLD  = new Color(95, 95, 95);
+
+    // X / arrow button colors (two states each: hoverCenter)
+    private static final Color X_HOT      = Color.WHITE;
+    private static final Color X_COLD     = new Color(220, 110, 110);
+    private static final Color ARROW_HOT  = Color.WHITE;
+    private static final Color ARROW_COLD = new Color(175, 175, 175);
+
+    // Dashed ring shown when cursor is outside
+    private static final Color DASHED_COLOR = new Color(190, 190, 190);
+
+    // ── Static strokes ────────────────────────────────────────────────────
+
+    private static final Stroke STROKE_THIN   = new BasicStroke(1.0f);
+    private static final Stroke STROKE_BORDER = new BasicStroke(1.5f);
+    private static final Stroke STROKE_DASHED = new BasicStroke(
+        1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 0f, new float[]{5f, 5f}, 0f);
+    private static final Stroke STROKE_X      = new BasicStroke(
+        2.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+
+    // ── Overlay bounding box ──────────────────────────────────────────────
+
+    private static final Dimension OVERLAY_SIZE = new Dimension(FULL_R * 2, FULL_R * 2);
+
+    // ── Alpha composites — two sets: near (cursor inside) and far (cursor outside) ──
+
+    private static final float ALPHA_FAR = 0.40f;
+
+    private static final AlphaComposite AC_BG_NEAR     = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.90f);
+    private static final AlphaComposite AC_SLICE_NEAR  = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.88f);
+    private static final AlphaComposite AC_CENTER_NEAR = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.95f);
+    private static final AlphaComposite AC_DIV_NEAR    = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.80f);
+    private static final AlphaComposite AC_FULL_NEAR   = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.00f);
+
+    private static final AlphaComposite AC_BG_FAR      = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.90f * ALPHA_FAR);
+    private static final AlphaComposite AC_SLICE_FAR   = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.88f * ALPHA_FAR);
+    private static final AlphaComposite AC_CENTER_FAR  = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.95f * ALPHA_FAR);
+    private static final AlphaComposite AC_DIV_FAR     = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.80f * ALPHA_FAR);
+    private static final AlphaComposite AC_FULL_FAR    = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, ALPHA_FAR);
+
+    private static final AlphaComposite AC_DASHED      = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f);
+
+    // ── Instance fields ───────────────────────────────────────────────────
+
     private final Client client;
     private final RingController ringController;
-    private Point center = null;
+
+    // Written by setCenter() (EDT); read by render() (client thread). Volatile for visibility.
+    private volatile Point center = null;
+
+    // Cached derived fonts — initialized once on first render to avoid per-frame deriveFont() calls.
+    private Font labelFont;
+    private Font arrowFont;
 
     @Inject
     public RingMenuOverlay(Client client, RingController ringController)
@@ -51,45 +114,41 @@ public class RingMenuOverlay extends Overlay
 
     public boolean isOutsideRing(int x, int y)
     {
-        if (center == null) return true;
-        int dx = x - center.x;
-        int dy = y - center.y;
+        Point c = center;
+        if (c == null) return true;
+        int dx = x - c.x;
+        int dy = y - c.y;
         return dx * dx + dy * dy > RING_RADIUS * RING_RADIUS;
     }
 
     public int getHighlightedIndex()
     {
-        if (center == null) return -1;
+        Point c = center;
+        if (c == null) return -1;
         List<RingEntry> entries = ringController.currentEntries();
         if (entries.isEmpty()) return -1;
 
         net.runelite.api.Point mouse = client.getMouseCanvasPosition();
-        int dx = mouse.getX() - center.x;
-        int dy = mouse.getY() - center.y;
+        int dx = mouse.getX() - c.x;
+        int dy = mouse.getY() - c.y;
         if (dx * dx + dy * dy <= INNER_RADIUS * INNER_RADIUS) return -1;
 
-        double mouseAngle = Math.atan2(dy, dx);
-        int n = entries.size();
-        double sliceSize = 2 * Math.PI / n;
+        return bestSliceIndex(dx, dy, entries.size());
+    }
 
-        int best = 0;
-        double bestDiff = Double.MAX_VALUE;
+    private int bestSliceIndex(int dx, int dy, int n)
+    {
+        double mouseAngle = Math.atan2(dy, dx);
+        double sliceSize  = 2 * Math.PI / n;
+        int    best       = 0;
+        double bestDiff   = Double.MAX_VALUE;
         for (int i = 0; i < n; i++)
         {
             double entryAngle = sliceSize * i - Math.PI / 2;
-            double diff = angleDiff(mouseAngle, entryAngle);
-            if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); best = i; }
+            double diff       = Math.abs(angleDiff(mouseAngle, entryAngle));
+            if (diff < bestDiff) { bestDiff = diff; best = i; }
         }
         return best;
-    }
-
-    private boolean isHoveringCenter()
-    {
-        if (center == null) return false;
-        net.runelite.api.Point mouse = client.getMouseCanvasPosition();
-        int dx = mouse.getX() - center.x;
-        int dy = mouse.getY() - center.y;
-        return dx * dx + dy * dy <= INNER_RADIUS * INNER_RADIUS;
     }
 
     private double angleDiff(double a, double b)
@@ -103,10 +162,18 @@ public class RingMenuOverlay extends Overlay
     @Override
     public Dimension render(Graphics2D g)
     {
-        if (!ringController.isOpen() || center == null) return null;
+        Point c = center;
+        if (!ringController.isOpen() || c == null) return null;
+
+        // Initialize derived fonts once from the overlay's Graphics2D context.
+        if (labelFont == null)
+        {
+            labelFont = FontManager.getRunescapeFont().deriveFont(17f);
+            arrowFont = FontManager.getRunescapeBoldFont().deriveFont(26f);
+        }
 
         List<RingEntry> entries = ringController.currentEntries();
-        int n = entries.size();
+        int n  = entries.size();
         int lx = FULL_R, ly = FULL_R;
 
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,      RenderingHints.VALUE_ANTIALIAS_ON);
@@ -115,20 +182,31 @@ public class RingMenuOverlay extends Overlay
         Composite origComposite = g.getComposite();
         Stroke    origStroke    = g.getStroke();
 
+        // Read mouse position once for the entire frame.
         net.runelite.api.Point mouse = client.getMouseCanvasPosition();
-        boolean outside     = isOutsideRing(mouse.getX(), mouse.getY());
-        boolean hoverCenter = isHoveringCenter();
+        int     mdx         = mouse.getX() - c.x;
+        int     mdy         = mouse.getY() - c.y;
+        int     mDistSq     = mdx * mdx + mdy * mdy;
+        boolean outside     = mDistSq > RING_RADIUS * RING_RADIUS;
+        boolean hoverCenter = mDistSq <= INNER_RADIUS * INNER_RADIUS;
         boolean canBack     = ringController.canGoBack();
-        float   alpha       = outside ? 0.40f : 1.0f;
+
+        // Select the pre-allocated composite set for this frame (near vs far).
+        AlphaComposite acBg     = outside ? AC_BG_FAR     : AC_BG_NEAR;
+        AlphaComposite acSlice  = outside ? AC_SLICE_FAR  : AC_SLICE_NEAR;
+        AlphaComposite acCenter = outside ? AC_CENTER_FAR : AC_CENTER_NEAR;
+        AlphaComposite acDiv    = outside ? AC_DIV_FAR    : AC_DIV_NEAR;
+        AlphaComposite acFull   = outside ? AC_FULL_FAR   : AC_FULL_NEAR;
 
         // ── 1. Background disc ────────────────────────────────────────────
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.90f * alpha));
+        g.setComposite(acBg);
         g.setColor(BG);
         g.fillOval(lx - RING_RADIUS, ly - RING_RADIUS, RING_RADIUS * 2, RING_RADIUS * 2);
 
         if (n > 0)
         {
-            int highlighted  = getHighlightedIndex();
+            // Compute highlighted slice index inline (avoids redundant mouse + entries reads).
+            int highlighted  = hoverCenter ? -1 : bestSliceIndex(mdx, mdy, n);
             double sliceSize = 2 * Math.PI / n;
             double sliceDeg  = Math.toDegrees(sliceSize);
 
@@ -139,25 +217,23 @@ public class RingMenuOverlay extends Overlay
                 int startDeg  = (int)(-Math.toDegrees(cAngle) + sliceDeg / 2);
                 int arcDeg    = -(int)sliceDeg;
 
-                g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.88f * alpha));
+                g.setComposite(acSlice);
                 g.setColor(SLICE_HOT);
                 g.fillArc(lx - RING_RADIUS, ly - RING_RADIUS,
                     RING_RADIUS * 2, RING_RADIUS * 2, startDeg, arcDeg);
             }
 
-            // ── 3. Center button fill (covers center of highlighted arc) ──
-            Color centerFill = !canBack
-                ? (hoverCenter ? new Color(170, 18, 18) : new Color(110, 12, 12))
-                : (hoverCenter ? new Color(195, 96, 0)  : new Color(55, 55, 55));
-
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.95f * alpha));
-            g.setColor(centerFill);
+            // ── 3. Center button fill ─────────────────────────────────────
+            g.setComposite(acCenter);
+            g.setColor(!canBack
+                ? (hoverCenter ? CENTER_CLOSE_HOT : CENTER_CLOSE_COLD)
+                : (hoverCenter ? CENTER_BACK_HOT  : CENTER_BACK_COLD));
             g.fillOval(lx - CENTER_R, ly - CENTER_R, CENTER_R * 2, CENTER_R * 2);
 
             // ── 4. Slice divider lines ────────────────────────────────────
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.80f * alpha));
+            g.setComposite(acDiv);
             g.setColor(DIVIDER);
-            g.setStroke(new BasicStroke(1.0f));
+            g.setStroke(STROKE_THIN);
             for (int i = 0; i < n; i++)
             {
                 double div = sliceSize * i - Math.PI / 2 - sliceSize / 2;
@@ -169,75 +245,66 @@ public class RingMenuOverlay extends Overlay
             }
 
             // ── 5. Outer ring border ──────────────────────────────────────
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+            g.setComposite(acFull);
             g.setColor(BORDER);
-            g.setStroke(new BasicStroke(1.5f));
+            g.setStroke(STROKE_BORDER);
             g.drawOval(lx - RING_RADIUS, ly - RING_RADIUS, RING_RADIUS * 2, RING_RADIUS * 2);
 
             // ── 6. Inner circle border ────────────────────────────────────
-            Color innerBorder = !canBack
-                ? (hoverCenter ? new Color(230, 60, 60)  : new Color(155, 35, 35))
-                : (hoverCenter ? new Color(255, 168, 40) : new Color(95, 95, 95));
-
-            g.setColor(innerBorder);
-            g.setStroke(new BasicStroke(1.5f));
+            g.setColor(!canBack
+                ? (hoverCenter ? INNER_CLOSE_HOT : INNER_CLOSE_COLD)
+                : (hoverCenter ? INNER_BACK_HOT  : INNER_BACK_COLD));
             g.drawOval(lx - INNER_RADIUS, ly - INNER_RADIUS, INNER_RADIUS * 2, INNER_RADIUS * 2);
 
             // Dashed outer ring when cursor is outside
             if (outside)
             {
-                g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f));
-                g.setColor(new Color(190, 190, 190));
-                g.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
-                    0f, new float[]{5f, 5f}, 0f));
+                g.setComposite(AC_DASHED);
+                g.setColor(DASHED_COLOR);
+                g.setStroke(STROKE_DASHED);
                 g.drawOval(lx - RING_RADIUS, ly - RING_RADIUS, RING_RADIUS * 2, RING_RADIUS * 2);
             }
 
             // ── 7. Slice text labels ──────────────────────────────────────
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-            Font font = g.getFont().deriveFont(Font.PLAIN, 12.5f);
-            g.setFont(font);
-            FontMetrics fm = g.getFontMetrics(font);
+            g.setComposite(acFull);
+            g.setFont(labelFont);
+            FontMetrics fm = g.getFontMetrics();
             int midR = (INNER_RADIUS + RING_RADIUS) / 2;
 
             for (int i = 0; i < n; i++)
             {
-                boolean lit = (i == highlighted);
                 double angle = sliceSize * i - Math.PI / 2;
                 int tx = lx + (int)(midR * Math.cos(angle));
                 int ty = ly + (int)(midR * Math.sin(angle));
 
                 String label = entries.get(i).getLabel();
-                int tw = fm.stringWidth(label);
+                int tw    = fm.stringWidth(label);
                 int textX = tx - tw / 2;
                 int textY = ty + fm.getAscent() / 2 - 1;
 
                 g.setColor(SHADOW);
                 g.drawString(label, textX + 1, textY + 1);
-                g.setColor(lit ? TEXT_HOT : TEXT_NORMAL);
+                g.setColor(i == highlighted ? TEXT_HOT : TEXT_NORMAL);
                 g.drawString(label, textX, textY);
             }
         }
 
         // ── 8. Center button content ──────────────────────────────────────
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        g.setComposite(acFull);
 
         if (!canBack)
         {
-            Color xColor = hoverCenter ? Color.WHITE : new Color(220, 110, 110);
-            g.setColor(xColor);
-            g.setStroke(new BasicStroke(2.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(hoverCenter ? X_HOT : X_COLD);
+            g.setStroke(STROKE_X);
             int off = CENTER_R / 3;
             g.drawLine(lx - off, ly - off, lx + off, ly + off);
             g.drawLine(lx + off, ly - off, lx - off, ly + off);
         }
         else
         {
-            Color arrowColor = hoverCenter ? Color.WHITE : new Color(175, 175, 175);
-            g.setColor(arrowColor);
-            Font arrowFont = g.getFont().deriveFont(Font.BOLD, 26f);
+            g.setColor(hoverCenter ? ARROW_HOT : ARROW_COLD);
             g.setFont(arrowFont);
-            FontMetrics afm = g.getFontMetrics(arrowFont);
+            FontMetrics afm = g.getFontMetrics();
             String arrow = "‹";
             g.drawString(arrow, lx - afm.stringWidth(arrow) / 2, ly + afm.getAscent() / 2 - 2);
         }
@@ -245,6 +312,6 @@ public class RingMenuOverlay extends Overlay
         g.setComposite(origComposite);
         g.setStroke(origStroke);
 
-        return new Dimension(FULL_R * 2, FULL_R * 2);
+        return OVERLAY_SIZE;
     }
 }
