@@ -1,10 +1,13 @@
 package com.mepatrick73.ringmenu;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 import com.mepatrick73.ringmenu.data.RingDefinition;
 import com.mepatrick73.ringmenu.data.RingTreeEntry;
+import com.mepatrick73.ringmenu.data.StoredRings;
 import com.mepatrick73.ringmenu.engine.model.RingAction;
+import com.mepatrick73.ringmenu.engine.model.RingEntry;
 import com.mepatrick73.ringmenu.engine.model.RingNode;
 import com.mepatrick73.ringmenu.engine.runtime.RingController;
 import com.mepatrick73.ringmenu.engine.runtime.RingMenuOverlay;
@@ -15,6 +18,7 @@ import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.vars.InputType;
 import net.runelite.api.widgets.Widget;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.config.Keybind;
 import net.runelite.client.input.KeyListener;
@@ -37,6 +41,11 @@ public class RingManager
 	private static final String CONFIG_GROUP    = "ringmenu";
 	private static final String CONFIG_KEY_RINGS = "rings";
 
+	// Schema version of the saved ring list. Bump only alongside a migration in load(). Version 0 is the
+	// legacy pre-envelope format: a bare JSON array of RingDefinition, written by plugin <= 1.0.2.
+	private static final int CONFIG_VERSION = 1;
+	private static final int CONFIG_VERSION_LEGACY = 0;
+
 	// Sentinel the KeyRemapping plugin writes into the chatbox input while "Press Enter to Chat"
 	// is locked/idle. Its presence means a character key won't type, so it may open the ring.
 	private static final String PRESS_ENTER_TO_CHAT = "Press Enter to Chat...";
@@ -46,11 +55,20 @@ public class RingManager
 	@Inject private RingController ringController;
 	@Inject private RingMenuOverlay overlay;
 	@Inject private Client client;
+	@Inject private ClientThread clientThread;
 	@Inject private Gson gson;
 
 	private final List<RingDefinition> rings     = new ArrayList<>();
 	private final Map<String, KeyListener> listeners = new HashMap<>();
 	private List<RingProvider> providers = new ArrayList<>();
+
+	// Set when the stored rings could not be read (corrupt JSON, or written by a newer version we do not
+	// understand). While set, save() refuses to write: overwriting would destroy rings we failed to parse.
+	private boolean loadFailed;
+
+	// Set when load() read a pre-envelope value, so it can be rewritten in the current format right away
+	// instead of waiting for the user's next edit.
+	private boolean loadedLegacy;
 
 	// Typing context, computed on the client thread (see updateInputState) and read from the AWT
 	// key-dispatch thread. Reading widget/varc state directly in the key listener can be momentarily
@@ -65,15 +83,14 @@ public class RingManager
 
 	public void load()
 	{
+		loadFailed = false;
+		loadedLegacy = false;
 		String json = configManager.getConfiguration(CONFIG_GROUP, CONFIG_KEY_RINGS);
 		if (json != null && !json.isEmpty())
 		{
 			try
 			{
-				Type type = new TypeToken<List<RingDefinition>>()
-				{
-				}.getType();
-				List<RingDefinition> loaded = gson.fromJson(json, type);
+				List<RingDefinition> loaded = parse(json);
 				if (loaded != null)
 				{
 					rings.addAll(loaded);
@@ -81,14 +98,58 @@ public class RingManager
 			}
 			catch (Exception e)
 			{
-				log.warn("Failed to load rings", e);
+				// Keep the stored value intact — save() stays disabled until a successful load.
+				loadFailed = true;
+				log.warn("Failed to load rings; leaving the saved config untouched", e);
 			}
 		}
+		if (loadedLegacy)
+		{
+			// Migrate on read rather than on the next edit, so the stored value is never left behind in a
+			// format this plugin no longer writes.
+			log.debug("Migrating stored rings from v{} to v{}", CONFIG_VERSION_LEGACY, CONFIG_VERSION);
+			save();
+		}
 		rings.forEach(this::registerListener);
+		providers.forEach(RingProvider::onLoad);
+	}
+
+	// Reads either the versioned envelope or the legacy bare array. Throws when the value is unreadable
+	// or newer than we understand, which load() turns into the no-overwrite guard.
+	private List<RingDefinition> parse(String json)
+	{
+		JsonElement root = gson.fromJson(json, JsonElement.class);
+		if (root == null || root.isJsonNull())
+		{
+			return null;
+		}
+		if (root.isJsonArray())
+		{
+			// Legacy format — load() rewrites it as a versioned envelope straight away.
+			loadedLegacy = true;
+			Type listType = new TypeToken<List<RingDefinition>>()
+			{
+			}.getType();
+			return gson.fromJson(root, listType);
+		}
+
+		StoredRings envelope = gson.fromJson(root, StoredRings.class);
+		if (envelope.getVersion() > CONFIG_VERSION)
+		{
+			throw new IllegalStateException("Saved rings are version " + envelope.getVersion()
+				+ ", this plugin understands up to " + CONFIG_VERSION);
+		}
+		if (envelope.getRings() == null)
+		{
+			// An envelope with no ring list is not an empty ring list, it is a value we don't understand.
+			throw new IllegalStateException("Saved rings v" + envelope.getVersion() + " has no ring list");
+		}
+		return envelope.getRings();
 	}
 
 	public void unload()
 	{
+		providers.forEach(RingProvider::onUnload);
 		listeners.values().forEach(keyManager::unregisterKeyListener);
 		listeners.clear();
 		rings.clear();
@@ -123,7 +184,34 @@ public class RingManager
 
 	public void save()
 	{
-		configManager.setConfiguration(CONFIG_GROUP, CONFIG_KEY_RINGS, gson.toJson(rings));
+		if (loadFailed)
+		{
+			log.warn("Not saving rings: the stored config could not be read, so writing would discard it");
+			return;
+		}
+		configManager.setConfiguration(CONFIG_GROUP, CONFIG_KEY_RINGS,
+			gson.toJson(new StoredRings(CONFIG_VERSION, rings)));
+	}
+
+	// True when the stored rings could not be read. Edits are kept in memory but never written, so the
+	// editor must tell the user rather than letting them rebuild rings that will not survive a restart.
+	public boolean isLoadFailed()
+	{
+		return loadFailed;
+	}
+
+	// True when the entry points at something its provider no longer knows about — a deleted or renamed
+	// Inventory Setup, say. Sub-rings report missing when anything inside them does.
+	public boolean isEntryMissing(RingTreeEntry entry)
+	{
+		if (entry.isSubRing())
+		{
+			return entry.getChildren().stream().anyMatch(this::isEntryMissing);
+		}
+		RingProvider provider = findProvider(entry.getProviderId());
+		// No provider at all means buildRingNode drops the entry from the ring entirely, so it is broken
+		// in the strongest sense — never render it as healthy.
+		return provider == null || !provider.isEntryValid(entry);
 	}
 
 	// Recomputes the typing context. MUST be called on the client thread (driven by ClientTick),
@@ -266,7 +354,9 @@ public class RingManager
 		{
 			if (entry.isSubRing())
 			{
-				node.getChildren().add(buildRingNode(entry.getChildren(), entry.getLabel()));
+				RingNode child = buildRingNode(entry.getChildren(), entry.getLabel());
+				child.setMissing(child.getChildren().stream().anyMatch(RingEntry::isMissing));
+				node.getChildren().add(child);
 			}
 			else
 			{
@@ -277,8 +367,9 @@ public class RingManager
 				node.getChildren().add(new RingAction(entry.getLabel(), () ->
 				{
 					providers.forEach(RingProvider::deactivate);
-					action.run();
-				}));
+					// Selection arrives on the AWT mouse thread; provider actions touch client state.
+					clientThread.invoke(action);
+				}, !provider.isEntryValid(entry)));
 			}
 		}
 		return node;

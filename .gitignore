@@ -8,3 +8,6 @@ out
 nbactions.xml
 nb-configuration.xml
 nbproject/gradle.properties
+
+# Local-only Gradle settings (e.g. org.gradle.java.home)
+/gradle.properties

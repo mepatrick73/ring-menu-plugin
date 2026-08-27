@@ -11,16 +11,8 @@ import com.mepatrick73.ringmenu.providers.InventorySetupsProvider;
 import net.runelite.api.Client;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.Point;
-import net.runelite.api.ScriptID;
 import net.runelite.api.events.ClientTick;
-import net.runelite.api.events.GameTick;
 import net.runelite.api.events.MenuEntryAdded;
-import net.runelite.api.events.ScriptPostFired;
-import net.runelite.api.events.VarbitChanged;
-import net.runelite.api.events.WidgetLoaded;
-import net.runelite.api.gameval.InterfaceID;
-import net.runelite.api.gameval.VarbitID;
-import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -64,9 +56,6 @@ public class RingMenuPlugin extends Plugin
 	@Inject private ClientToolbar clientToolbar;
 
 	private volatile NavigationButton navButton;
-
-	private boolean bankWasOpen;
-	private boolean pendingReapply;
 
 	private final MouseAdapter mouseListener = new MouseAdapter()
 	{
@@ -159,61 +148,9 @@ public class RingMenuPlugin extends Plugin
 	}
 
 	@Subscribe
-	public void onWidgetLoaded(WidgetLoaded event)
-	{
-		if (event.getGroupId() == InterfaceID.BANKMAIN)
-		{
-			bankWasOpen = false;
-			pendingReapply = true;
-		}
-	}
-
-	@Subscribe
-	public void onGameTick(GameTick event)
-	{
-		if (!pendingReapply) return;
-		pendingReapply = false;
-		inventorySetupsProvider.reapplyIfNeeded();
-	}
-
-	@Subscribe
 	public void onClientTick(ClientTick event)
 	{
 		ringManager.updateInputState();
-	}
-
-	@Subscribe
-	public void onVarbitChanged(VarbitChanged event)
-	{
-		if (event.getVarbitId() != VarbitID.BANK_CURRENTTAB) return;
-		if (!bankWasOpen) return;
-		if (inventorySetupsProvider.getActiveSetupName() == null) return;
-
-		if (event.getValue() != 0 || !inventorySetupsProvider.isActiveTagCurrent())
-		{
-			inventorySetupsProvider.clear();
-			pendingReapply = false;
-		}
-	}
-
-	@Subscribe
-	public void onScriptPostFired(ScriptPostFired event)
-	{
-		if (event.getScriptId() != ScriptID.BANKMAIN_FINISHBUILDING) return;
-
-		bankWasOpen = true;
-
-		String setupName = inventorySetupsProvider.getActiveSetupName();
-		if (setupName == null) return;
-
-		if (inventorySetupsProvider.isActiveTagCurrent())
-		{
-			Widget title = client.getWidget(InterfaceID.Bankmain.TITLE);
-			if (title != null)
-			{
-				title.setText("Setup <col=ff0000>" + setupName + "</col>");
-			}
-		}
 	}
 
 	@Subscribe

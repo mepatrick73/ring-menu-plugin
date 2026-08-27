@@ -8,11 +8,18 @@ public class RingAction implements RingEntry
 {
 	private final String label;
 	private final Runnable action;
+	private final boolean missing;
 
 	@Override
 	public String getLabel()
 	{
 		return label;
+	}
+
+	@Override
+	public boolean isMissing()
+	{
+		return missing;
 	}
 
 	@Override

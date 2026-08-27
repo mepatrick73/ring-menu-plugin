@@ -31,6 +31,10 @@ public class RingMenuOverlay extends Overlay
 	private static final Color TEXT_HOT    = Color.WHITE;
 	private static final Color SHADOW      = new Color(0, 0, 0, 180);
 
+	// Entry whose target no longer exists (e.g. a deleted Inventory Setup).
+	private static final Color TEXT_MISSING     = new Color(214, 62, 62);
+	private static final Color TEXT_MISSING_HOT = new Color(255, 96, 96);
+
 	// Center fill: four states (canBack × hoverCenter)
 	private static final Color CENTER_CLOSE_HOT  = new Color(170, 18, 18);
 	private static final Color CENTER_CLOSE_COLD = new Color(110, 12, 12);
@@ -340,9 +344,13 @@ public class RingMenuOverlay extends Overlay
 				int textX = tx - tw / 2;
 				int textY = ty + fm.getAscent() / 2 - 1;
 
+				boolean missing = entries.get(i).isMissing();
+
 				g.setColor(SHADOW);
 				g.drawString(label, textX + 1, textY + 1);
-				g.setColor(i == highlighted ? TEXT_HOT : TEXT_NORMAL);
+				g.setColor(missing
+					? (i == highlighted ? TEXT_MISSING_HOT : TEXT_MISSING)
+					: (i == highlighted ? TEXT_HOT : TEXT_NORMAL));
 				g.drawString(label, textX, textY);
 			}
 		}

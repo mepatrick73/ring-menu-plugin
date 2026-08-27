@@ -1,38 +1,58 @@
 package com.mepatrick73.ringmenu.providers;
 
-import com.google.common.hash.Hashing;
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
 import com.mepatrick73.ringmenu.data.RingTreeEntry;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.client.config.ConfigManager;
-import net.runelite.client.plugins.banktags.BankTagsService;
+import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.PluginMessage;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
+/**
+ * Talks to the Inventory Setups plugin over its PluginMessage API instead of reading its config
+ * directly. The API lives in {@code inventorysetups.InventorySetupsPluginMessageHandler} (upstream
+ * since v1.25.0); this decouples us from the plugin's config schema ({@code setupsV3_} keys) and its
+ * layout tag hashing.
+ */
 @Slf4j
 @Singleton
 public class InventorySetupsProvider implements RingProvider
 {
 	public static final String ID = "inventorySetups";
 
-	private static final String IS_CONFIG_GROUP     = "inventorysetups";
-	// Key prefix matches InventorySetups plugin v3 config schema. If that plugin migrates
-	// to a v4 key, this prefix must be updated to match.
-	private static final String SETUPS_V3_PREFIX    = "setupsV3_";
-	// Murmur3-128 hash prefix used by InventorySetups to name its bank-tag layouts.
-	// Guava Hashing is a transitive dependency from runelite-client — not declared in build.gradle.
-	private static final String LAYOUT_PREFIX_MARKER = "_invsetup_";
+	// Mirrors the API_* constants in inventorysetups.InventorySetupsPluginMessageHandler. Duplicated as
+	// literals because the two plugins share no compile-time dependency.
+	private static final String IS_NAMESPACE = "inventory-setups";
+	private static final String MSG_GET_SETUPS = "get-setups";
+	private static final String MSG_SETUPS_CHANGED = "setups-changed";
+	private static final String MSG_VIEW = "view";
+	private static final String MSG_CLEAR = "clear";
+	private static final String DATA_SETUPS = "setups";
+	private static final String DATA_SETUP = "setup";
+	private static final String DATA_VERSION = "version";
+	// Highest API_VERSION we were written against. A higher one means the contract changed in a way we
+	// have not been updated for, so we warn once and carry on reading the fields we know.
+	private static final int SUPPORTED_API_VERSION = 1;
 
-	@Inject private ConfigManager configManager;
-	@Inject private BankTagsService bankTagsService;
-	@Inject private Gson gson;
+	@Inject private EventBus eventBus;
 
-	private volatile String activeSetupName;
-	private volatile String activeTagName;
+	// Setup names, kept current by the setups-changed broadcast. Seeded once in onLoad.
+	private volatile List<String> cachedNames = List.of();
+
+	// True once Inventory Setups has actually told us its setups. While false we know nothing, which is
+	// indistinguishable from the plugin being disabled or not yet started, so entries stay unflagged.
+	private volatile boolean setupsKnown;
+
+	// The setup the ring last opened, so cancel only clears that one (and only while it is still active).
+	private volatile String openedSetup;
+
+	// So an unknown API version is reported once per session rather than on every broadcast.
+	private volatile boolean apiVersionWarned;
 
 	@Override
 	public String getId()
@@ -47,85 +67,140 @@ public class InventorySetupsProvider implements RingProvider
 	}
 
 	@Override
+	public void onLoad()
+	{
+		eventBus.register(this);
+
+		// Bootstrap, since Inventory Setups only broadcasts when its setups change and may have started
+		// before us. An empty result is not an answer: with no acknowledgement in the API it is
+		// indistinguishable from Inventory Setups not being loaded at all, so leave setupsKnown false and
+		// flag nothing. The setupsKnown re-check guards the narrow case where a broadcast lands on the
+		// client thread while this runs, whose payload is at least as fresh as ours.
+		List<String> names = new ArrayList<>();
+		eventBus.post(new PluginMessage(IS_NAMESPACE, MSG_GET_SETUPS, Map.of(DATA_SETUPS, names)));
+		if (!names.isEmpty() && !setupsKnown)
+		{
+			cachedNames = toSetupNames(names);
+			setupsKnown = true;
+		}
+	}
+
+	@Override
+	public void onUnload()
+	{
+		eventBus.unregister(this);
+		// This is a singleton, so its state outlives a disable/enable of the plugin. Drop what we know:
+		// while unregistered we miss every setups-changed, and Inventory Setups does not re-broadcast an
+		// unchanged list, so a stale cache would otherwise survive forever and mis-report deleted setups.
+		cachedNames = List.of();
+		setupsKnown = false;
+		openedSetup = null;
+	}
+
+	@Subscribe
+	public void onPluginMessage(PluginMessage message)
+	{
+		if (!IS_NAMESPACE.equals(message.getNamespace()) || !MSG_SETUPS_CHANGED.equals(message.getName()))
+		{
+			return;
+		}
+		checkApiVersion(message);
+
+		Object data = message.getData().get(DATA_SETUPS);
+		if (data instanceof Collection)
+		{
+			cachedNames = toSetupNames((Collection<?>) data);
+			setupsKnown = true;
+		}
+	}
+
+	// Inventory Setups bumps its API_VERSION when the contract changes in a breaking way. We keep reading
+	// the payload, since the setups field is the part we use and is most likely to survive, but say so.
+	private void checkApiVersion(PluginMessage message)
+	{
+		Object version = message.getData().get(DATA_VERSION);
+		if (version instanceof Integer && (Integer) version > SUPPORTED_API_VERSION && !apiVersionWarned)
+		{
+			apiVersionWarned = true;
+			log.warn("Inventory Setups reports API version {}, this plugin was written against {}",
+				version, SUPPORTED_API_VERSION);
+		}
+	}
+
+	// The payload crosses a plugin boundary with no shared types, so its element type is only a
+	// convention. Keep the Strings and drop anything else here, rather than letting an unchecked cast
+	// surface as a ClassCastException somewhere further from the cause.
+	private static List<String> toSetupNames(Collection<?> data)
+	{
+		List<String> names = new ArrayList<>(data.size());
+		for (Object o : data)
+		{
+			if (o instanceof String)
+			{
+				names.add((String) o);
+			}
+		}
+		if (names.size() != data.size())
+		{
+			log.warn("Ignored {} non-String entries in an {} payload", data.size() - names.size(), IS_NAMESPACE);
+		}
+		return List.copyOf(names);
+	}
+
+	@Override
 	public List<RingTreeEntry> getAvailableEntries()
 	{
-		List<RingTreeEntry> entries = new ArrayList<>();
-		String wholePrefix = ConfigManager.getWholeKey(IS_CONFIG_GROUP, null, SETUPS_V3_PREFIX);
-		List<String> keys = configManager.getConfigurationKeys(wholePrefix);
-
-		for (String wholeKey : keys)
+		List<String> names = cachedNames;
+		List<RingTreeEntry> entries = new ArrayList<>(names.size());
+		for (String name : names)
 		{
-			String configKey = wholeKey.substring(wholePrefix.length() - SETUPS_V3_PREFIX.length());
-			String json = configManager.getConfiguration(IS_CONFIG_GROUP, configKey);
-			if (json == null) continue;
-			try
-			{
-				JsonObject obj = gson.fromJson(json, JsonObject.class);
-				String name = obj.get("name").getAsString();
-				entries.add(RingTreeEntry.action(name, ID, name));
-			}
-			catch (Exception e)
-			{
-				log.warn("Failed to read setup name from key {}", configKey, e);
-			}
+			entries.add(RingTreeEntry.action(name, ID, name));
 		}
 		return entries;
 	}
 
-	// Must be called on the client thread.
+	// A saved entry is broken once its setup has been deleted or renamed in Inventory Setups. Only
+	// answered once we have a real list: an empty cache means "we haven't been told", not "no setups".
+	@Override
+	public boolean isEntryValid(RingTreeEntry entry)
+	{
+		return !setupsKnown || cachedNames.contains(entry.getEntryId());
+	}
+
+	// Called before any ring entry's action runs. Forget what we opened, so cancel does not later close a
+	// setup on behalf of an entry belonging to another provider.
+	@Override
+	public void deactivate()
+	{
+		openedSetup = null;
+	}
+
+	// The returned action must run on the client thread; RingManager arranges that.
 	@Override
 	public Runnable buildAction(RingTreeEntry entry)
 	{
 		String name = entry.getEntryId();
-		// Must use murmur3_128 to match the tag name InventorySetups itself created.
-		String tagName = LAYOUT_PREFIX_MARKER + Hashing.murmur3_128().hashUnencodedChars(name).toString();
 		return () ->
 		{
-			activeSetupName = name;
-			activeTagName = tagName;
-			bankTagsService.openBankTag(tagName, BankTagsService.OPTION_ALLOW_MODIFICATIONS | BankTagsService.OPTION_HIDE_TAG_NAME);
+			openedSetup = name;
+			eventBus.post(new PluginMessage(IS_NAMESPACE, MSG_VIEW, Map.of(DATA_SETUP, name)));
 		};
 	}
 
-	public String getActiveSetupName()
-	{
-		return activeSetupName;
-	}
-
-	public boolean isActiveTagCurrent()
-	{
-		return activeTagName != null && activeTagName.equals(bankTagsService.getActiveTag());
-	}
-
-	public void clear()
-	{
-		activeSetupName = null;
-		activeTagName = null;
-	}
-
-	@Override
-	public void deactivate()
-	{
-		clear();
-	}
-
-	// Must be called on the client thread. Mirrors InventorySetupsPlugin.resetBankSearch().
+	// Triggered by the ring's cancel (centre X). Asks Inventory Setups to clear the setup the ring opened,
+	// tagged with its name so it is left alone if the user has since switched to a different setup.
 	@Override
 	public Runnable cancelAction()
 	{
-		if (activeSetupName == null) return null;
+		String name = openedSetup;
+		if (name == null)
+		{
+			return null;
+		}
 		return () ->
 		{
-			clear();
-			bankTagsService.closeBankTag();
+			openedSetup = null;
+			eventBus.post(new PluginMessage(IS_NAMESPACE, MSG_CLEAR, Map.of(DATA_SETUP, name)));
 		};
-	}
-
-	public void reapplyIfNeeded()
-	{
-		if (activeTagName != null)
-		{
-			bankTagsService.openBankTag(activeTagName, BankTagsService.OPTION_ALLOW_MODIFICATIONS | BankTagsService.OPTION_HIDE_TAG_NAME);
-		}
 	}
 }

@@ -73,6 +73,10 @@ public class RingEditorPanel extends PluginPanel
 	private static final Color ACCENT   = ColorScheme.BRAND_ORANGE;
 	private static final Color TEXT     = Color.WHITE;
 	private static final Color TEXT_DIM = new Color(120, 120, 120);
+	// Entry whose target no longer exists (e.g. a deleted Inventory Setup).
+	private static final Color TEXT_MISSING = new Color(214, 62, 62);
+	private static final String MISSING_TOOLTIP =
+		"This entry's target no longer exists. Delete it, or recreate the target under its original name.";
 
 	private static final int ROW_H            = 27;
 	private static final int MIN_ENTRIES_ROWS = 4;
@@ -244,6 +248,24 @@ public class RingEditorPanel extends PluginPanel
 		return root;
 	}
 
+	// Shown when the saved rings could not be read. Saving is disabled in that state so the stored value
+	// is not overwritten, which means anything built here is lost on restart — say so rather than letting
+	// the panel look like a fresh, empty install.
+	private JPanel buildLoadFailedBanner()
+	{
+		JPanel banner = new JPanel(new BorderLayout());
+		banner.setBackground(BG_DARK);
+		banner.setBorder(new CompoundBorder(
+			new MatteBorder(0, 2, 0, 0, TEXT_MISSING), new EmptyBorder(6, 8, 6, 8)));
+		JLabel lbl = new JLabel("<html><b>Your saved rings could not be read.</b><br>"
+			+ "They have been left untouched and nothing you change here will be saved. "
+			+ "Check the client log, then restart.</html>");
+		lbl.setForeground(TEXT_MISSING);
+		lbl.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(lbl, BorderLayout.CENTER);
+		return banner;
+	}
+
 	public void rebuildRingRows()
 	{
 		if (!SwingUtilities.isEventDispatchThread())
@@ -252,6 +274,11 @@ public class RingEditorPanel extends PluginPanel
 			return;
 		}
 		ringRows.removeAll();
+		if (ringManager.isLoadFailed())
+		{
+			ringRows.add(buildLoadFailedBanner());
+			ringRows.add(Box.createVerticalStrut(4));
+		}
 		for (RingDefinition ring : ringManager.getRings())
 		{
 			ringRows.add(buildRingRow(ring));
@@ -919,12 +946,16 @@ public class RingEditorPanel extends PluginPanel
 		content.setBackground(BG_DARK);
 		content.setBorder(contentBorder);
 
+		// Red when the entry (or, for a sub-ring, something inside it) points at a target its provider no
+		// longer knows about — a deleted Inventory Setup, say. Rechecked on every refresh.
+		boolean missing = ringManager.isEntryMissing(entry);
+
 		JLabel lbl;
 		if (entry.isSubRing())
 		{
 			String arrow = expanded ? "▼ " : "► ";
 			lbl = new JLabel("└ " + arrow + entry.getLabel());
-			lbl.setForeground(isActiveParent ? ACCENT : textColor);
+			lbl.setForeground(missing ? TEXT_MISSING : (isActiveParent ? ACCENT : textColor));
 			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 			lbl.addMouseListener(new MouseAdapter()
 			{
@@ -948,9 +979,13 @@ public class RingEditorPanel extends PluginPanel
 		else
 		{
 			lbl = new JLabel("└ " + entry.getLabel());
-			lbl.setForeground(textColor);
+			lbl.setForeground(missing ? TEXT_MISSING : textColor);
 		}
 		lbl.setFont(FontManager.getRunescapeFont());
+		if (missing)
+		{
+			lbl.setToolTipText(MISSING_TOOLTIP);
+		}
 
 		JButton del = smallBtn("×");
 		del.setForeground(TEXT_DIM);
