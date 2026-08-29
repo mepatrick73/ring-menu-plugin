@@ -24,6 +24,13 @@ public interface RingProvider
 		return null;
 	}
 
+	// Registers a callback fired whenever this provider's available entries may have changed (a setup
+	// added, a tag tab deleted, …). May be invoked from any thread; pass null to clear. Providers
+	// whose entries never change while loaded may ignore it.
+	default void setChangeListener(Runnable listener)
+	{
+	}
+
 	// Called when the ring manager loads/unloads, for providers that need to hook the event bus.
 	default void onLoad()
 	{

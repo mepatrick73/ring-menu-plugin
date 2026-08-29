@@ -6,6 +6,7 @@ import com.google.gson.reflect.TypeToken;
 import com.mepatrick73.ringmenu.data.RingDefinition;
 import com.mepatrick73.ringmenu.data.RingTreeEntry;
 import com.mepatrick73.ringmenu.data.StoredRings;
+import com.mepatrick73.ringmenu.data.TextOrientation;
 import com.mepatrick73.ringmenu.engine.model.RingAction;
 import com.mepatrick73.ringmenu.engine.model.RingEntry;
 import com.mepatrick73.ringmenu.engine.model.RingNode;
@@ -61,6 +62,10 @@ public class RingManager
 	private final List<RingDefinition> rings     = new ArrayList<>();
 	private final Map<String, KeyListener> listeners = new HashMap<>();
 	private List<RingProvider> providers = new ArrayList<>();
+
+	// The definition the open ring was built from, so editor changes to it can be pushed into the
+	// live ring. Never cleared on close — only meaningful while ringController.isOpen().
+	private volatile RingDefinition openRingDef;
 
 	// Set when the stored rings could not be read (corrupt JSON, or written by a newer version we do not
 	// understand). While set, save() refuses to write: overwriting would destroy rings we failed to parse.
@@ -149,6 +154,9 @@ public class RingManager
 
 	public void unload()
 	{
+		// Providers are singletons that outlive a plugin disable/enable; drop the editor callback so a
+		// stale panel is never called back after shutdown.
+		providers.forEach(p -> p.setChangeListener(null));
 		providers.forEach(RingProvider::onUnload);
 		listeners.values().forEach(keyManager::unregisterKeyListener);
 		listeners.clear();
@@ -206,7 +214,10 @@ public class RingManager
 	{
 		if (entry.isSubRing())
 		{
-			return entry.getChildren().stream().anyMatch(this::isEntryMissing);
+			// Disabled children never reach the ring, so they don't make the sub-ring unhealthy.
+			return entry.getChildren().stream()
+				.filter(RingTreeEntry::isEnabled)
+				.anyMatch(this::isEntryMissing);
 		}
 		RingProvider provider = findProvider(entry.getProviderId());
 		// No provider at all means buildRingNode drops the entry from the ring entirely, so it is broken
@@ -326,7 +337,8 @@ public class RingManager
 			else
 			{
 				overlay.setCenter(new Point(client.getCanvasWidth() / 2, client.getCanvasHeight() / 2));
-				ringController.open(buildRingNode(ring.getEntries(), ring.getName()));
+				openRingDef = ring;
+				ringController.open(buildRoot(ring));
 			}
 
 			// Consume so the key doesn't also reach the game. Modifier keys are never consumed.
@@ -347,14 +359,33 @@ public class RingManager
 		}
 	}
 
-	private RingNode buildRingNode(List<RingTreeEntry> entries, String label)
+	// Pushes the current (possibly unsaved) state of the given definition into the ring, if that ring
+	// is the one open right now. The user's position in sub-rings is kept where the levels still
+	// exist. Called from the editor on the EDT after every edit.
+	public void refreshOpenRing(RingDefinition ring)
+	{
+		if (ring == null || ring != openRingDef || !ringController.isOpen())
+		{
+			return;
+		}
+		ringController.replaceRoot(buildRoot(ring));
+	}
+
+	private RingNode buildRoot(RingDefinition ring)
+	{
+		return buildRingNode(ring.getEntries(), ring.getName(), ring.getTextOrientation());
+	}
+
+	private RingNode buildRingNode(List<RingTreeEntry> entries, String label, TextOrientation orientation)
 	{
 		RingNode node = new RingNode(label);
+		node.setTextOrientation(orientation);
 		for (RingTreeEntry entry : entries)
 		{
+			if (!entry.isEnabled()) continue;
 			if (entry.isSubRing())
 			{
-				RingNode child = buildRingNode(entry.getChildren(), entry.getLabel());
+				RingNode child = buildRingNode(entry.getChildren(), entry.getLabel(), entry.getTextOrientation());
 				child.setMissing(child.getChildren().stream().anyMatch(RingEntry::isMissing));
 				node.getChildren().add(child);
 			}

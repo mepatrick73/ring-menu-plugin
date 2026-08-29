@@ -2,6 +2,7 @@ package com.mepatrick73.ringmenu.data;
 
 import lombok.AccessLevel;
 import lombok.Data;
+import lombok.Getter;
 import lombok.Setter;
 import net.runelite.client.config.Keybind;
 
@@ -23,6 +24,11 @@ public class RingDefinition
 	private int hotkeyModifiers = 0;
 	// Boxed Boolean so missing field in old JSON deserializes as null (treated as true).
 	private Boolean enabled;
+	// How the root ring draws its slice labels. Stored as null when it is the default
+	// (HORIZONTAL) so old plugin versions and old JSON round-trip cleanly.
+	@Getter(AccessLevel.NONE)
+	@Setter(AccessLevel.NONE)
+	private TextOrientation textOrientation;
 	private List<RingTreeEntry> entries;
 
 	public Keybind getHotkey()
@@ -47,6 +53,16 @@ public class RingDefinition
 	public boolean hasHotkey()
 	{
 		return !getHotkey().equals(Keybind.NOT_SET);
+	}
+
+	public TextOrientation getTextOrientation()
+	{
+		return TextOrientation.orDefault(textOrientation);
+	}
+
+	public void setTextOrientation(TextOrientation orientation)
+	{
+		textOrientation = TextOrientation.storedForm(orientation);
 	}
 
 	public boolean isEnabled()

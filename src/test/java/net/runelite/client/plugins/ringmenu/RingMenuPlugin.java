@@ -118,6 +118,7 @@ public class RingMenuPlugin extends Plugin
 	protected void startUp()
 	{
 		ringManager.setProviders(List.of(inventorySetupsProvider, bankTagsProvider));
+		ringManager.getProviders().forEach(p -> p.setChangeListener(editorPanel::refreshProviderEntries));
 		ringManager.load();
 		overlayManager.add(overlay);
 		mouseManager.registerMouseListener(mouseListener);

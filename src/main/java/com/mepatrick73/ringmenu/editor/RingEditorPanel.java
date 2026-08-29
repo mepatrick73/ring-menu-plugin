@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.mepatrick73.ringmenu.RingManager;
 import com.mepatrick73.ringmenu.data.RingDefinition;
 import com.mepatrick73.ringmenu.data.RingTreeEntry;
+import com.mepatrick73.ringmenu.data.TextOrientation;
 import com.mepatrick73.ringmenu.providers.RingProvider;
 import net.runelite.client.config.Keybind;
 import net.runelite.client.ui.ColorScheme;
@@ -25,6 +26,8 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /** JPanel that tells its parent JScrollPane "fill my width to the viewport width." */
 class TrackWidthPanel extends JPanel implements Scrollable
@@ -179,6 +182,9 @@ public class RingEditorPanel extends PluginPanel
 	private Point               dragStartScreen;
 	private boolean             dragging;
 
+	// A provider update arrived mid-drag; run the deferred refresh once the drag ends.
+	private boolean providerRefreshPending;
+
 	// Drop target
 	private int                 dropLineY          = -1;
 	private boolean             dropIntoSubring    = false;
@@ -320,6 +326,7 @@ public class RingEditorPanel extends PluginPanel
 			if (newName == null || newName.trim().isEmpty()) return;
 			ring.setName(newName.trim());
 			ringManager.save();
+			ringManager.refreshOpenRing(ring);
 			rebuildRingRows();
 		});
 
@@ -416,12 +423,41 @@ public class RingEditorPanel extends PluginPanel
 		cards.show(cardPanel, "detail");
 	}
 
-	private void populateDetail()
+	// Called when a provider's available entries change (a setup added in-game, a tag tab deleted, …)
+	// so the picker and the missing-entry highlights track the live state without leaving and
+	// reopening the ring. May be invoked from any thread; no-op unless the detail view is showing —
+	// the next selectRing() rebuilds everything anyway.
+	public void refreshProviderEntries()
 	{
-		// Refresh provider entry cache so search filtering is cheap (no getAvailableEntries() per keystroke).
+		if (!SwingUtilities.isEventDispatchThread())
+		{
+			SwingUtilities.invokeLater(this::refreshProviderEntries);
+			return;
+		}
+		if (selectedRing == null || detailRoot == null || !detailRoot.isVisible()) return;
+		// Rebuilding the entry rows mid-drag would detach the handle the mouse is captured on while
+		// leaving the drag state pointing at stale rows; defer until the drag ends.
+		if (dragEntry != null)
+		{
+			providerRefreshPending = true;
+			return;
+		}
+		rebuildProviderEntryCache();
+		applyProviderFilter();
+		refreshEntries();
+	}
+
+	private void rebuildProviderEntryCache()
+	{
 		cachedProviderEntries.clear();
 		for (RingProvider p : ringManager.getProviders())
 			cachedProviderEntries.add(p.getAvailableEntries());
+	}
+
+	private void populateDetail()
+	{
+		// Refresh provider entry cache so search filtering is cheap (no getAvailableEntries() per keystroke).
+		rebuildProviderEntryCache();
 
 		detailRoot.removeAll();
 
@@ -556,6 +592,8 @@ public class RingEditorPanel extends PluginPanel
 			saveBtn.setBackground(ACCENT);
 			saveBtn.setForeground(Color.BLACK);
 		}
+		// Live preview: if this ring is open in-game right now, push the edit into it immediately.
+		ringManager.refreshOpenRing(selectedRing);
 	}
 
 	private void saveChanges()
@@ -576,11 +614,13 @@ public class RingEditorPanel extends PluginPanel
 		RingDefinition snap = gson.fromJson(ringSnapshot, RingDefinition.class);
 		selectedRing.setName(snap.getName());
 		selectedRing.setHotkey(snap.getHotkey());
+		selectedRing.setTextOrientation(snap.getTextOrientation());
 		selectedRing.setEntries(snap.getEntries());
 		dirty = false;
 		expandedRings.clear();
 		activeList = selectedRing.getEntries();
 		populateDetail();
+		ringManager.refreshOpenRing(selectedRing);
 	}
 
 	private void navigateBack()
@@ -841,7 +881,28 @@ public class RingEditorPanel extends PluginPanel
 			}
 		});
 		row.add(lbl, BorderLayout.CENTER);
+		row.add(buildOrientationButton(
+			selectedRing::getTextOrientation, selectedRing::setTextOrientation), BorderLayout.EAST);
 		return row;
+	}
+
+	// Small H/R toggle controlling how one ring level draws its slice labels in-game
+	// (H = horizontal, R = radial, i.e. rotated to run from the inside of the circle outward).
+	private JButton buildOrientationButton(Supplier<TextOrientation> get, Consumer<TextOrientation> set)
+	{
+		JButton btn = smallBtn(get.get() == TextOrientation.RADIAL ? "R" : "H");
+		btn.setForeground(TEXT_DIM);
+		btn.setToolTipText("Label text: H = horizontal, R = radial. Click to switch.");
+		btn.addActionListener(e ->
+		{
+			TextOrientation next = get.get() == TextOrientation.RADIAL
+				? TextOrientation.HORIZONTAL
+				: TextOrientation.RADIAL;
+			set.accept(next);
+			btn.setText(next == TextOrientation.RADIAL ? "R" : "H");
+			markDirty();
+		});
+		return btn;
 	}
 
 	private void renderLevel(List<RingTreeEntry> entries, int depth)
@@ -949,13 +1010,16 @@ public class RingEditorPanel extends PluginPanel
 		// Red when the entry (or, for a sub-ring, something inside it) points at a target its provider no
 		// longer knows about — a deleted Inventory Setup, say. Rechecked on every refresh.
 		boolean missing = ringManager.isEntryMissing(entry);
+		// Toggled-off entries never render in the ring; drawn dim even when broken.
+		boolean entryOn = entry.isEnabled();
 
 		JLabel lbl;
 		if (entry.isSubRing())
 		{
 			String arrow = expanded ? "▼ " : "► ";
 			lbl = new JLabel("└ " + arrow + entry.getLabel());
-			lbl.setForeground(missing ? TEXT_MISSING : (isActiveParent ? ACCENT : textColor));
+			lbl.setForeground(!entryOn ? TEXT_DIM
+				: missing ? TEXT_MISSING : (isActiveParent ? ACCENT : textColor));
 			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 			lbl.addMouseListener(new MouseAdapter()
 			{
@@ -979,7 +1043,7 @@ public class RingEditorPanel extends PluginPanel
 		else
 		{
 			lbl = new JLabel("└ " + entry.getLabel());
-			lbl.setForeground(missing ? TEXT_MISSING : textColor);
+			lbl.setForeground(!entryOn ? TEXT_DIM : missing ? TEXT_MISSING : textColor);
 		}
 		lbl.setFont(FontManager.getRunescapeFont());
 		if (missing)
@@ -1008,6 +1072,22 @@ public class RingEditorPanel extends PluginPanel
 
 		content.add(lbl, BorderLayout.CENTER);
 
+		JCheckBox onBox = new JCheckBox();
+		onBox.setSelected(entryOn);
+		onBox.setBackground(BG_DARK);
+		onBox.setFocusPainted(false);
+		onBox.setToolTipText("Show / hide this entry in the ring");
+		onBox.addActionListener(e ->
+		{
+			entry.setEnabled(onBox.isSelected());
+			markDirty();
+			refreshEntries();
+		});
+
+		JPanel entryActions = new JPanel();
+		entryActions.setLayout(new BoxLayout(entryActions, BoxLayout.X_AXIS));
+		entryActions.setBackground(BG_DARK);
+
 		if (entry.isSubRing())
 		{
 			JButton pen = smallBtn("✎");
@@ -1022,17 +1102,16 @@ public class RingEditorPanel extends PluginPanel
 				markDirty();
 				refreshEntries();
 			});
-			JPanel entryActions = new JPanel();
-			entryActions.setLayout(new BoxLayout(entryActions, BoxLayout.X_AXIS));
-			entryActions.setBackground(BG_DARK);
+			entryActions.add(buildOrientationButton(entry::getTextOrientation, entry::setTextOrientation));
+			entryActions.add(onBox);
 			entryActions.add(pen);
-			entryActions.add(del);
-			content.add(entryActions, BorderLayout.EAST);
 		}
 		else
 		{
-			content.add(del, BorderLayout.EAST);
+			entryActions.add(onBox);
 		}
+		entryActions.add(del);
+		content.add(entryActions, BorderLayout.EAST);
 
 		row.add(handle, BorderLayout.WEST);
 		row.add(content, BorderLayout.CENTER);
@@ -1137,6 +1216,11 @@ public class RingEditorPanel extends PluginPanel
 		dragging        = false;
 		clearDragIndicator();
 		if (entriesContainer != null) entriesContainer.repaint();
+		if (providerRefreshPending)
+		{
+			providerRefreshPending = false;
+			refreshProviderEntries();
+		}
 	}
 
 	private void clearDragIndicator()

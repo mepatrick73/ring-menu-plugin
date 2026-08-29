@@ -54,6 +54,15 @@ public class InventorySetupsProvider implements RingProvider
 	// So an unknown API version is reported once per session rather than on every broadcast.
 	private volatile boolean apiVersionWarned;
 
+	// Fired after every setups-changed broadcast, from the client thread.
+	private volatile Runnable changeListener;
+
+	@Override
+	public void setChangeListener(Runnable listener)
+	{
+		changeListener = listener;
+	}
+
 	@Override
 	public String getId()
 	{
@@ -111,6 +120,11 @@ public class InventorySetupsProvider implements RingProvider
 		{
 			cachedNames = toSetupNames((Collection<?>) data);
 			setupsKnown = true;
+			Runnable listener = changeListener;
+			if (listener != null)
+			{
+				listener.run();
+			}
 		}
 	}
 

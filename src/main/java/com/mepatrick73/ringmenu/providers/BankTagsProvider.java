@@ -2,6 +2,9 @@ package com.mepatrick73.ringmenu.providers;
 
 import com.mepatrick73.ringmenu.data.RingTreeEntry;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.banktags.BankTagsService;
 import net.runelite.client.util.Text;
 
@@ -20,8 +23,46 @@ public class BankTagsProvider implements RingProvider
 
 	@Inject private ConfigManager configManager;
 	@Inject private BankTagsService bankTagsService;
+	@Inject private EventBus eventBus;
 
 	private volatile String activeTag;
+
+	// Fired when the tag tab list changes; may be invoked from any thread.
+	private volatile Runnable changeListener;
+
+	@Override
+	public void setChangeListener(Runnable listener)
+	{
+		changeListener = listener;
+	}
+
+	@Override
+	public void onLoad()
+	{
+		eventBus.register(this);
+	}
+
+	@Override
+	public void onUnload()
+	{
+		eventBus.unregister(this);
+	}
+
+	// The available entries are the Bank Tags plugin's tag tabs, which live in its config — a change
+	// to that key is a change to our entry list.
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!CONFIG_GROUP.equals(event.getGroup()) || !TAG_TABS_CONFIG.equals(event.getKey()))
+		{
+			return;
+		}
+		Runnable listener = changeListener;
+		if (listener != null)
+		{
+			listener.run();
+		}
+	}
 
 	@Override
 	public String getId()

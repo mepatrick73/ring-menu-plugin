@@ -1,5 +1,6 @@
 package com.mepatrick73.ringmenu.data;
 
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -19,6 +20,18 @@ public class RingTreeEntry
 
 	private Type type;
 	private String label;
+
+	// Boxed Boolean so missing field in old JSON deserializes as null (treated as true).
+	// Accessors below normalize; raw lombok accessors are suppressed.
+	@Getter(AccessLevel.NONE)
+	@Setter(AccessLevel.NONE)
+	private Boolean enabled;
+
+	// SUB_RING only: how this sub-ring draws its slice labels. Stored as null when it is the
+	// default (HORIZONTAL) so old plugin versions and old JSON round-trip cleanly.
+	@Getter(AccessLevel.NONE)
+	@Setter(AccessLevel.NONE)
+	private TextOrientation textOrientation;
 
 	// ACTION fields
 	private String providerId;
@@ -56,6 +69,26 @@ public class RingTreeEntry
 		e.label = label;
 		e.children = new ArrayList<>();
 		return e;
+	}
+
+	public boolean isEnabled()
+	{
+		return enabled == null || enabled;
+	}
+
+	public void setEnabled(boolean value)
+	{
+		enabled = value ? null : Boolean.FALSE;
+	}
+
+	public TextOrientation getTextOrientation()
+	{
+		return TextOrientation.orDefault(textOrientation);
+	}
+
+	public void setTextOrientation(TextOrientation orientation)
+	{
+		textOrientation = TextOrientation.storedForm(orientation);
 	}
 
 	public boolean isAction()
