@@ -19,9 +19,14 @@ Ring Menu lets you bind any number of radial menus to hotkeys. Each ring holds e
 - Bind multiple rings to different hotkeys
 - Mix bank tags and inventory setups in the same ring
 - Nest rings inside rings with sub-rings
+- Toggle entries on and off without deleting them
+- Horizontal or radial label text, chosen per ring and per sub-ring
+- Labels shrink to fit their slice, and hovering shows the full name of a shortened label
+- Adjustable ring size
 - Search and filter your setups directly in the panel
 - Drag and drop to reorder entries
 - Rename rings and sub-rings in place
+- Edits show up in an open ring immediately, and new setups and tags appear in the picker as you make them
 - Entries pointing at a deleted inventory setup are shown in red
 
 ---
@@ -78,6 +83,8 @@ Press your hotkey anywhere in-game. The ring appears centered on screen — hove
 - **Navigate back** — click the center button (shows ‹) when inside a sub-ring
 - **Reorder entries** — drag the grip handle on the left of any entry in the detail view
 - **Rename** — click the ✎ button on any ring row or sub-ring entry
+- **Hide an entry** — untick its checkbox in the detail view; it stays in the list but leaves the ring
+- **Radial text** — click the H/R button on the ring's root row or a sub-ring row. Radial keeps long names readable on crowded rings
 - **Red entry** — its inventory setup no longer exists, so delete it or recreate the setup under its original name. A sub-ring turns red when something inside it is broken, so you can spot it while collapsed
 
 ---
@@ -91,6 +98,15 @@ Inventory Setups must be **v1.25.0 or newer**. Ring Menu talks to it over its pl
 ---
 
 ## Update log
+
+### 1.2.0
+
+- Entries can be toggled on and off with a checkbox, without deleting them
+- Label text orientation is chosen per ring, horizontal or radial (along the slice), on the root ring and on each sub-ring
+- Long labels shrink to fit their slice before being truncated, and hovering a slice shows the full name when its label is shortened
+- New ring size setting
+- Changes made in the editor appear immediately in an open ring, keeping your place in sub-rings
+- The entry picker and the red missing-entry highlights update live when inventory setups or bank tags change
 
 ### 1.1.0
 
