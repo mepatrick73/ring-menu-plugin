@@ -47,4 +47,11 @@ public interface RingProvider
 	{
 		return true;
 	}
+
+	// Returns an icon image for the given entry ID, or null when none is available.
+	// Safe to call from any thread; implementations may return an AsyncBufferedImage.
+	default java.awt.image.BufferedImage getEntryIcon(String entryId)
+	{
+		return null;
+	}
 }

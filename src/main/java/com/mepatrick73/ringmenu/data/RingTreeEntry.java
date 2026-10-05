@@ -33,6 +33,18 @@ public class RingTreeEntry
 	@Setter(AccessLevel.NONE)
 	private TextOrientation textOrientation;
 
+	// SUB_RING only: whether this ring level renders as a vertical list. Stored as null when
+	// false so old JSON round-trips cleanly.
+	@Getter(AccessLevel.NONE)
+	@Setter(AccessLevel.NONE)
+	private Boolean expandedList;
+
+	// SUB_RING only: whether bank tag entries in this sub-ring are shown in alphabetical order.
+	// Stored as null when false so old JSON round-trips cleanly.
+	@Getter(AccessLevel.NONE)
+	@Setter(AccessLevel.NONE)
+	private Boolean sortBankTags;
+
 	// ACTION fields
 	private String providerId;
 	private String entryId;
@@ -89,6 +101,26 @@ public class RingTreeEntry
 	public void setTextOrientation(TextOrientation orientation)
 	{
 		textOrientation = TextOrientation.storedForm(orientation);
+	}
+
+	public boolean isExpandedList()
+	{
+		return expandedList != null && expandedList;
+	}
+
+	public void setExpandedList(boolean value)
+	{
+		expandedList = value ? Boolean.TRUE : null;
+	}
+
+	public boolean isSortBankTags()
+	{
+		return sortBankTags != null && sortBankTags;
+	}
+
+	public void setSortBankTags(boolean value)
+	{
+		sortBankTags = value ? Boolean.TRUE : null;
 	}
 
 	public boolean isAction()

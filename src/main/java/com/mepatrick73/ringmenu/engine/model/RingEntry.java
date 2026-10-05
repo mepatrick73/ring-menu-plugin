@@ -13,4 +13,10 @@ public interface RingEntry
 	{
 		return false;
 	}
+
+	// Icon to show next to the label in list-view mode, or null when none is available.
+	default java.awt.image.BufferedImage getIcon()
+	{
+		return null;
+	}
 }

@@ -5,8 +5,11 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.banktags.BankTagsService;
 import net.runelite.client.util.Text;
+
+import java.awt.image.BufferedImage;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -23,6 +26,7 @@ public class BankTagsProvider implements RingProvider
 
 	@Inject private ConfigManager configManager;
 	@Inject private BankTagsService bankTagsService;
+	@Inject private ItemManager itemManager;
 	@Inject private EventBus eventBus;
 
 	private volatile String activeTag;
@@ -88,6 +92,26 @@ public class BankTagsProvider implements RingProvider
 			entries.add(RingTreeEntry.action(tag, ID, tag));
 		}
 		return entries;
+	}
+
+	// The Bank Tags plugin stores each tab's icon item ID under "icon_<tagName>" in its config.
+	// Returns null when the tag has no icon set, or the config value is not a valid item ID.
+	@Override
+	public BufferedImage getEntryIcon(String entryId)
+	{
+		String raw = configManager.getConfiguration(CONFIG_GROUP, "icon_" + entryId);
+		if (raw == null || raw.isEmpty())
+		{
+			return null;
+		}
+		try
+		{
+			return itemManager.getImage(Integer.parseInt(raw.trim()), 1, false);
+		}
+		catch (NumberFormatException e)
+		{
+			return null;
+		}
 	}
 
 	// Must be called on the client thread.

@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -615,6 +616,8 @@ public class RingEditorPanel extends PluginPanel
 		selectedRing.setName(snap.getName());
 		selectedRing.setHotkey(snap.getHotkey());
 		selectedRing.setTextOrientation(snap.getTextOrientation());
+		selectedRing.setExpandedList(snap.isExpandedList());
+		selectedRing.setSortBankTags(snap.isSortBankTags());
 		selectedRing.setEntries(snap.getEntries());
 		dirty = false;
 		expandedRings.clear();
@@ -881,26 +884,81 @@ public class RingEditorPanel extends PluginPanel
 			}
 		});
 		row.add(lbl, BorderLayout.CENTER);
-		row.add(buildOrientationButton(
-			selectedRing::getTextOrientation, selectedRing::setTextOrientation), BorderLayout.EAST);
+		row.add(buildLevelSettingsButton(
+			selectedRing::isExpandedList, selectedRing::setExpandedList,
+			selectedRing::getTextOrientation, selectedRing::setTextOrientation,
+			selectedRing::isSortBankTags, selectedRing::setSortBankTags), BorderLayout.EAST);
 		return row;
 	}
 
-	// Small H/R toggle controlling how one ring level draws its slice labels in-game
-	// (H = horizontal, R = radial, i.e. rotated to run from the inside of the circle outward).
-	private JButton buildOrientationButton(Supplier<TextOrientation> get, Consumer<TextOrientation> set)
+	// Gear button that opens the display settings for one ring level (the root ring or a sub-ring):
+	// its layout (ring with horizontal or radial labels, or list) and alphabetical bank tags. Kept in a popup so the
+	// entry rows stay narrow enough for their labels.
+	private JButton buildLevelSettingsButton(
+		BooleanSupplier getList, Consumer<Boolean> setList,
+		Supplier<TextOrientation> getOrientation, Consumer<TextOrientation> setOrientation,
+		BooleanSupplier getSort, Consumer<Boolean> setSort)
 	{
-		JButton btn = smallBtn(get.get() == TextOrientation.RADIAL ? "R" : "H");
+		JButton btn = smallBtn("⚙");
+		// The RuneScape font has no gear glyph; Dialog falls back to a system font that does.
+		btn.setFont(new Font(Font.DIALOG, Font.PLAIN, 13));
 		btn.setForeground(TEXT_DIM);
-		btn.setToolTipText("Label text: H = horizontal, R = radial. Click to switch.");
+		btn.setToolTipText("Ring display settings");
 		btn.addActionListener(e ->
 		{
-			TextOrientation next = get.get() == TextOrientation.RADIAL
-				? TextOrientation.HORIZONTAL
-				: TextOrientation.RADIAL;
-			set.accept(next);
-			btn.setText(next == TextOrientation.RADIAL ? "R" : "H");
-			markDirty();
+			JPopupMenu menu = new JPopupMenu();
+
+			// Layout is one choice among three, so the options are radio items in a single group.
+			boolean isList   = getList.getAsBoolean();
+			boolean isRadial = getOrientation.get() == TextOrientation.RADIAL;
+
+			JRadioButtonMenuItem ringHorizontal = new JRadioButtonMenuItem("Ring, horizontal labels",
+				!isList && !isRadial);
+			ringHorizontal.setToolTipText("Radial ring with slice labels drawn horizontally");
+			ringHorizontal.addActionListener(ev ->
+			{
+				setList.accept(false);
+				setOrientation.accept(TextOrientation.HORIZONTAL);
+				markDirty();
+			});
+
+			JRadioButtonMenuItem ringRadial = new JRadioButtonMenuItem("Ring, radial labels",
+				!isList && isRadial);
+			ringRadial.setToolTipText("Radial ring with slice labels running from the center outward");
+			ringRadial.addActionListener(ev ->
+			{
+				setList.accept(false);
+				setOrientation.accept(TextOrientation.RADIAL);
+				markDirty();
+			});
+
+			JRadioButtonMenuItem list = new JRadioButtonMenuItem("List view", isList);
+			list.setToolTipText("Show entries as a vertical list instead of a radial ring");
+			list.addActionListener(ev ->
+			{
+				setList.accept(true);
+				markDirty();
+			});
+
+			ButtonGroup layout = new ButtonGroup();
+			layout.add(ringHorizontal);
+			layout.add(ringRadial);
+			layout.add(list);
+
+			JCheckBoxMenuItem sort = new JCheckBoxMenuItem("Alphabetize bank tags", getSort.getAsBoolean());
+			sort.setToolTipText("Show this ring's bank tags in alphabetical order; other entries keep their place");
+			sort.addActionListener(ev ->
+			{
+				setSort.accept(sort.isSelected());
+				markDirty();
+			});
+
+			menu.add(ringHorizontal);
+			menu.add(ringRadial);
+			menu.add(list);
+			menu.addSeparator();
+			menu.add(sort);
+			menu.show(btn, 0, btn.getHeight());
 		});
 		return btn;
 	}
@@ -1102,8 +1160,11 @@ public class RingEditorPanel extends PluginPanel
 				markDirty();
 				refreshEntries();
 			});
-			entryActions.add(buildOrientationButton(entry::getTextOrientation, entry::setTextOrientation));
 			entryActions.add(onBox);
+			entryActions.add(buildLevelSettingsButton(
+				entry::isExpandedList, entry::setExpandedList,
+				entry::getTextOrientation, entry::setTextOrientation,
+				entry::isSortBankTags, entry::setSortBankTags));
 			entryActions.add(pen);
 		}
 		else

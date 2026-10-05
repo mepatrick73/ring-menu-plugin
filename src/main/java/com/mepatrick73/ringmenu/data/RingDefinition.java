@@ -29,6 +29,12 @@ public class RingDefinition
 	@Getter(AccessLevel.NONE)
 	@Setter(AccessLevel.NONE)
 	private TextOrientation textOrientation;
+	// Whether this ring renders as a vertical list instead of the radial ring. Stored as
+	// null when false so old JSON round-trips cleanly (absent field treated as false).
+	private Boolean expandedList;
+	// Whether bank tag entries on this ring are shown in alphabetical order. Stored as null when
+	// false so old JSON round-trips cleanly.
+	private Boolean sortBankTags;
 	private List<RingTreeEntry> entries;
 
 	public Keybind getHotkey()
@@ -73,6 +79,26 @@ public class RingDefinition
 	public void setEnabled(boolean value)
 	{
 		enabled = value ? null : Boolean.FALSE;
+	}
+
+	public boolean isExpandedList()
+	{
+		return expandedList != null && expandedList;
+	}
+
+	public void setExpandedList(boolean value)
+	{
+		expandedList = value ? Boolean.TRUE : null;
+	}
+
+	public boolean isSortBankTags()
+	{
+		return sortBankTags != null && sortBankTags;
+	}
+
+	public void setSortBankTags(boolean value)
+	{
+		sortBankTags = value ? Boolean.TRUE : null;
 	}
 
 	public List<RingTreeEntry> getEntries()

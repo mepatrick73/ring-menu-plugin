@@ -16,6 +16,8 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.awt.*;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.Arc2D;
+import java.awt.image.BufferedImage;
 import java.util.List;
 
 @Singleton
@@ -69,6 +71,18 @@ public class RingMenuOverlay extends Overlay
 
 	// Dashed ring shown when cursor is outside
 	private static final Color DASHED_COLOR = new Color(190, 190, 190);
+
+	// ── List-mode layout constants ────────────────────────────────────
+
+	private static final int LIST_ROW_H     = 28;
+	private static final int LIST_ICON_SIZE = 18;
+	private static final int LIST_ICON_PAD  = 4;
+	private static final int LIST_H_PAD     = 10;
+	private static final int LIST_V_PAD     = 6;
+	private static final int LIST_MAX_W     = 300;
+	private static final int LIST_ARC       = 8;
+	// Extra height reserved at the bottom of the panel for the back indicator row.
+	private static final int LIST_BACK_H    = 22;
 
 	// ── Static strokes ────────────────────────────────────────────────────
 
@@ -132,11 +146,24 @@ public class RingMenuOverlay extends Overlay
 	private String[]  sliceTexts;
 	private boolean[] sliceShortened;
 
-	// Per-slice geometry cache — recomputed only when the number of slices changes.
+	// ── List-mode layout cache ────────────────────────────────────────
+
+	// Invalidated (set to null) when the displayed node or font config changes.
+	private RingNode  cachedListNode;
+	private int       listPanelW;
+	private int       listPanelH;
+	// True when at least one entry in the current list level has a non-null icon.
+	private boolean   listAnyIcon;
+
+	// Canvas-absolute bounding rect of the list panel. Written on the client render thread;
+	// read on the AWT EDT by isOutsideRing() and getHighlightedIndex(). A volatile reference
+	// to a freshly-allocated Rectangle is safe: the EDT always sees a complete object.
+	private volatile Rectangle listPanelBounds;
+
+	// ── Per-slice geometry cache — recomputed only when the number of slices changes.
 	// Eliminates sin/cos calls for static geometry on every frame.
 	private int      cachedN     = -1;
 	private double   sliceSize;        // radians per slice
-	private int      sliceDeg;         // degrees per slice (for fillArc)
 	private double[] sliceAngles;      // center angle of each slice
 	private int[]    divDx1, divDy1;   // divider line inner endpoint offsets from center
 	private int[]    divDx2, divDy2;   // divider line outer endpoint offsets from center
@@ -200,6 +227,7 @@ public class RingMenuOverlay extends Overlay
 		cachedFontSize  = size;
 		cachedShrink    = shrink;
 		cachedLabelNode = null;
+		cachedListNode  = null;
 		labelFont = type.getFont(size);
 		arrowFont = type.getFont(Math.round(size * (26f / 17f)));
 	}
@@ -209,7 +237,6 @@ public class RingMenuOverlay extends Overlay
 		if (n == cachedN) return;
 		cachedN    = n;
 		sliceSize  = 2 * Math.PI / n;
-		sliceDeg   = (int) Math.toDegrees(sliceSize);
 		int midR   = (innerRadius + ringRadius) / 2;
 		// Chord width of one slice at the label's radius. For n == 1 the slice spans the whole
 		// circle (sin(pi) == 0), so fall back to the horizontal room inside the ring at that height.
@@ -247,6 +274,12 @@ public class RingMenuOverlay extends Overlay
 
 	public boolean isOutsideRing(int x, int y)
 	{
+		RingNode node = ringController.currentNode();
+		if (node != null && node.isExpandedList())
+		{
+			Rectangle b = listPanelBounds;
+			return b == null || !b.contains(x, y);
+		}
 		Point c = center;
 		if (c == null) return true;
 		int dx = x - c.x;
@@ -262,6 +295,19 @@ public class RingMenuOverlay extends Overlay
 		if (c == null) return -1;
 		List<RingEntry> entries = ringController.currentEntries();
 		if (entries.isEmpty()) return -1;
+
+		RingNode node = ringController.currentNode();
+		if (node != null && node.isExpandedList())
+		{
+			Rectangle b = listPanelBounds;
+			if (b == null) return -1;
+			net.runelite.api.Point m = client.getMouseCanvasPosition();
+			if (!b.contains(m.getX(), m.getY())) return -1;
+			int localY = m.getY() - b.y - LIST_V_PAD;
+			if (localY < 0) return -1;
+			int row = localY / LIST_ROW_H;
+			return row < entries.size() ? row : -1;
+		}
 
 		net.runelite.api.Point mouse = client.getMouseCanvasPosition();
 		int dx = mouse.getX() - c.x;
@@ -336,6 +382,152 @@ public class RingMenuOverlay extends Overlay
 		}
 	}
 
+	// Recomputes the list panel dimensions when the displayed node or font config changes.
+	// Must be called after the Graphics2D font is set to labelFont.
+	private void rebuildListCache(Graphics2D g, RingNode node, List<RingEntry> entries)
+	{
+		if (node == cachedListNode) return;
+		cachedListNode = node;
+		listAnyIcon = entries.stream().anyMatch(e -> e.getIcon() != null);
+		int iconColW = listAnyIcon ? LIST_ICON_SIZE + LIST_ICON_PAD : 0;
+		FontMetrics fm = g.getFontMetrics(labelFont);
+		int maxW = 0;
+		for (RingEntry e : entries)
+		{
+			int w = fm.stringWidth(e.getLabel());
+			if (w > maxW) maxW = w;
+		}
+		listPanelW = Math.min(LIST_MAX_W, iconColW + maxW + LIST_H_PAD * 2);
+		listPanelH = LIST_V_PAD * 2 + entries.size() * LIST_ROW_H
+			+ (ringController.canGoBack() ? LIST_BACK_H : 0);
+	}
+
+	// Renders the current ring level as a vertical list panel centered on c.
+	// origin is the canvas point the overlay renderer translated g to for this frame.
+	private void renderList(Graphics2D g, Point origin, Point c, RingNode node, List<RingEntry> entries)
+	{
+		int n = entries.size();
+		g.setFont(labelFont);
+		rebuildListCache(g, node, entries);
+
+		// Panel canvas position, kept on-screen so a tall list near an edge is still fully clickable.
+		int panelLeft = clamp(c.x - listPanelW / 2, 0, client.getCanvasWidth()  - listPanelW);
+		int panelTop  = clamp(c.y - listPanelH / 2, 0, client.getCanvasHeight() - listPanelH);
+
+		// Draw relative to where the renderer actually put the overlay this frame — not where we asked
+		// for it — so the painted rows always line up with listPanelBounds, which the clicks test.
+		int px = panelLeft - origin.x;
+		int py = panelTop  - origin.y;
+
+		// Request tighter overlay positioning for the next frame.
+		updatePreferredLocation(panelLeft - RIM, panelTop - RIM);
+
+		// Update the volatile canvas-absolute bounds used by isOutsideRing and getHighlightedIndex
+		// on the AWT EDT. Written here (client thread), read there; volatile reference is sufficient.
+		listPanelBounds = new Rectangle(panelLeft, panelTop, listPanelW, listPanelH);
+
+		// Determine near/far alpha state
+		net.runelite.api.Point mouse = client.getMouseCanvasPosition();
+		Rectangle pb = listPanelBounds;
+		boolean outside = !pb.contains(mouse.getX(), mouse.getY());
+
+		AlphaComposite acBg    = outside ? AC_BG_FAR    : AC_BG_NEAR;
+		AlphaComposite acSlice = outside ? AC_SLICE_FAR : AC_SLICE_NEAR;
+		AlphaComposite acFull  = outside ? AC_FULL_FAR  : AC_FULL_NEAR;
+
+		// ── 1. Background rounded rect ────────────────────────────────
+		g.setComposite(acBg);
+		g.setColor(BG);
+		g.fillRoundRect(px, py, listPanelW, listPanelH, LIST_ARC, LIST_ARC);
+
+		// ── 2. Border ─────────────────────────────────────────────────
+		g.setComposite(acFull);
+		g.setColor(BORDER);
+		g.setStroke(STROKE_BORDER);
+		g.drawRoundRect(px, py, listPanelW, listPanelH, LIST_ARC, LIST_ARC);
+
+		// ── 3. Hovered row ────────────────────────────────────────────
+		int hoveredRow = -1;
+		if (!outside)
+		{
+			int localMy = mouse.getY() - panelTop - LIST_V_PAD;
+			if (localMy >= 0)
+			{
+				int row = localMy / LIST_ROW_H;
+				if (row >= 0 && row < n) hoveredRow = row;
+			}
+		}
+
+		// ── 4. Entry rows ─────────────────────────────────────────────
+		int iconColW = listAnyIcon ? LIST_ICON_SIZE + LIST_ICON_PAD : 0;
+		FontMetrics fm = g.getFontMetrics(labelFont);
+
+		for (int i = 0; i < n; i++)
+		{
+			RingEntry entry = entries.get(i);
+			int rowY = py + LIST_V_PAD + i * LIST_ROW_H;
+			boolean hot = (i == hoveredRow);
+
+			if (hot)
+			{
+				g.setComposite(acSlice);
+				g.setColor(SLICE_HOT);
+				g.fillRoundRect(px + 1, rowY, listPanelW - 2, LIST_ROW_H, 4, 4);
+			}
+
+			g.setComposite(acFull);
+			g.setFont(labelFont);
+
+			int textX = px + LIST_H_PAD;
+
+			BufferedImage icon = entry.getIcon();
+			if (icon != null)
+			{
+				int iconY = rowY + (LIST_ROW_H - LIST_ICON_SIZE) / 2;
+				g.drawImage(icon, textX, iconY, LIST_ICON_SIZE, LIST_ICON_SIZE, null);
+			}
+			textX += iconColW;
+
+			String label = entry.getLabel();
+			int maxTextW = listPanelW - (textX - px) - LIST_H_PAD;
+			label = truncate(label, fm, maxTextW);
+			int textY = rowY + (LIST_ROW_H + fm.getAscent() - fm.getDescent()) / 2;
+			drawSliceLabel(g, label, textX, textY, entry.isMissing(), hot);
+		}
+
+		// ── 5. Back indicator (visual only; click anywhere below rows triggers back) ──
+		if (ringController.canGoBack())
+		{
+			int backY = py + listPanelH - LIST_BACK_H;
+			g.setComposite(acFull);
+			g.setColor(DIVIDER);
+			g.setStroke(STROKE_THIN);
+			g.drawLine(px + LIST_H_PAD, backY, px + listPanelW - LIST_H_PAD, backY);
+
+			boolean hoverBack = !outside
+				&& mouse.getY() >= panelTop + LIST_V_PAD + n * LIST_ROW_H
+				&& mouse.getY() < panelTop + listPanelH;
+			g.setColor(hoverBack ? ARROW_HOT : ARROW_COLD);
+			g.setFont(labelFont);
+			g.drawString("‹ Back", px + LIST_H_PAD, backY + fm.getAscent());
+		}
+	}
+
+	private static int clamp(int v, int lo, int hi)
+	{
+		return Math.max(lo, Math.min(v, Math.max(lo, hi)));
+	}
+
+	// Only replaces the preferred location when it actually moved, to avoid a per-frame allocation.
+	private void updatePreferredLocation(int x, int y)
+	{
+		Point cur = getPreferredLocation();
+		if (cur == null || cur.x != x || cur.y != y)
+		{
+			setPreferredLocation(new Point(x, y));
+		}
+	}
+
 	@Override
 	public Dimension render(Graphics2D g)
 	{
@@ -344,7 +536,31 @@ public class RingMenuOverlay extends Overlay
 		if (node == null || c == null) return null;
 
 		refreshFonts();
+
+		// The renderer translated g to the overlay's bounds location just before calling render(). It can
+		// differ from the preferred location (the renderer clamps overlays on-screen, and the preferred
+		// location lags a frame when switching between list and radial levels), so all drawing is placed
+		// relative to it, keeping the painted ring/list aligned with the canvas-space hit tests.
+		Point origin = getBounds().getLocation();
+
+		// ── List mode: bypass radial geometry and render a vertical panel ─
+		if (node.isExpandedList())
+		{
+			List<RingEntry> entries = node.getChildren();
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,      RenderingHints.VALUE_ANTIALIAS_ON);
+			g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+			Composite origComposite = g.getComposite();
+			Stroke    origStroke    = g.getStroke();
+			renderList(g, origin, c, node, entries);
+			g.setComposite(origComposite);
+			g.setStroke(origStroke);
+			// Return a Dimension large enough to contain the list panel for next frame's clip.
+			return new Dimension(listPanelW + 2 * RIM, listPanelH + 2 * RIM);
+		}
+
 		refreshGeometry();
+		// Re-anchor on the ring's center: a list level may have moved the overlay elsewhere.
+		updatePreferredLocation(c.x - fullR, c.y - fullR);
 
 		// Take the entries from the node itself, NOT from a second controller call: the stack can be
 		// swapped from the EDT (sub-ring click, editor live update) between two synchronized calls,
@@ -352,7 +568,7 @@ public class RingMenuOverlay extends Overlay
 		// node's child list is never mutated once built, so this snapshot is internally consistent.
 		List<RingEntry> entries = node.getChildren();
 		int n  = entries.size();
-		int lx = fullR, ly = fullR;
+		int lx = c.x - origin.x, ly = c.y - origin.y;
 		boolean radial = node.getTextOrientation() == TextOrientation.RADIAL;
 		if (n > 0)
 		{
@@ -392,11 +608,14 @@ public class RingMenuOverlay extends Overlay
 		// ── 2. Highlighted pie slice ──────────────────────────────────────
 		if (highlighted >= 0)
 		{
-			int startDeg = (int)(-Math.toDegrees(sliceAngles[highlighted]) + sliceDeg / 2);
+			// Doubles, not fillArc's int degrees: truncating 360/n drifts the painted slice away from
+			// the exact angular range sliceIndexFromAngle() hit-tests.
+			double extent   = Math.toDegrees(sliceSize);
+			double startDeg = -Math.toDegrees(sliceAngles[highlighted]) + extent / 2;
 			g.setComposite(acSlice);
 			g.setColor(SLICE_HOT);
-			g.fillArc(lx - ringRadius, ly - ringRadius,
-				ringRadius * 2, ringRadius * 2, startDeg, -sliceDeg);
+			g.fill(new Arc2D.Double(lx - ringRadius, ly - ringRadius,
+				ringRadius * 2, ringRadius * 2, startDeg, -extent, Arc2D.PIE));
 		}
 
 		// ── 3. Center button fill ─────────────────────────────────────────

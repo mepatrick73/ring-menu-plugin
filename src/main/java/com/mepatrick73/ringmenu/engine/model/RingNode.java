@@ -24,6 +24,11 @@ public class RingNode implements RingEntry
 	@Setter
 	private TextOrientation textOrientation;
 
+	// When true the overlay renders this ring level as a vertical list instead of the radial ring.
+	@Getter
+	@Setter
+	private boolean expandedList;
+
 	// Set by the builder once the children are in: true when anything inside this sub-ring is missing,
 	// so a broken entry is still visible while its sub-ring is collapsed.
 	@Setter

@@ -12,6 +12,7 @@ import com.mepatrick73.ringmenu.engine.model.RingEntry;
 import com.mepatrick73.ringmenu.engine.model.RingNode;
 import com.mepatrick73.ringmenu.engine.runtime.RingController;
 import com.mepatrick73.ringmenu.engine.runtime.RingMenuOverlay;
+import com.mepatrick73.ringmenu.providers.BankTagsProvider;
 import com.mepatrick73.ringmenu.providers.RingProvider;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
@@ -29,9 +30,12 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.awt.Point;
 import java.awt.event.KeyEvent;
+import java.awt.image.BufferedImage;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -373,19 +377,29 @@ public class RingManager
 
 	private RingNode buildRoot(RingDefinition ring)
 	{
-		return buildRingNode(ring.getEntries(), ring.getName(), ring.getTextOrientation());
+		RingNode node = buildRingNode(ring.getEntries(), ring.getName(), ring.getTextOrientation(),
+			ring.isSortBankTags());
+		node.setExpandedList(ring.isExpandedList());
+		return node;
 	}
 
-	private RingNode buildRingNode(List<RingTreeEntry> entries, String label, TextOrientation orientation)
+	private RingNode buildRingNode(List<RingTreeEntry> entries, String label, TextOrientation orientation,
+		boolean sortBankTags)
 	{
 		RingNode node = new RingNode(label);
 		node.setTextOrientation(orientation);
+		if (sortBankTags)
+		{
+			entries = withBankTagsSorted(entries);
+		}
 		for (RingTreeEntry entry : entries)
 		{
 			if (!entry.isEnabled()) continue;
 			if (entry.isSubRing())
 			{
-				RingNode child = buildRingNode(entry.getChildren(), entry.getLabel(), entry.getTextOrientation());
+				RingNode child = buildRingNode(entry.getChildren(), entry.getLabel(), entry.getTextOrientation(),
+					entry.isSortBankTags());
+				child.setExpandedList(entry.isExpandedList());
 				child.setMissing(child.getChildren().stream().anyMatch(RingEntry::isMissing));
 				node.getChildren().add(child);
 			}
@@ -394,16 +408,43 @@ public class RingManager
 				RingProvider provider = findProvider(entry.getProviderId());
 				if (provider == null) continue;
 				Runnable action = provider.buildAction(entry);
+				BufferedImage icon = provider.getEntryIcon(entry.getEntryId());
 				// RingAction.onSelect() already calls controller.close() before invoking the action.
 				node.getChildren().add(new RingAction(entry.getLabel(), () ->
 				{
 					providers.forEach(RingProvider::deactivate);
 					// Selection arrives on the AWT mouse thread; provider actions touch client state.
 					clientThread.invoke(action);
-				}, !provider.isEntryValid(entry)));
+				}, !provider.isEntryValid(entry), icon));
 			}
 		}
 		return node;
+	}
+
+	// Returns a copy of the list where the bank tag entries are in alphabetical order, each one taking
+	// a slot a bank tag already held, so sub-rings and other providers' entries keep their positions.
+	// The stored order is left untouched; this only affects what the ring shows.
+	private static List<RingTreeEntry> withBankTagsSorted(List<RingTreeEntry> entries)
+	{
+		List<RingTreeEntry> tags = new ArrayList<>();
+		for (RingTreeEntry e : entries)
+		{
+			if (isBankTag(e)) tags.add(e);
+		}
+		tags.sort(Comparator.comparing(e -> e.getLabel() == null ? "" : e.getLabel(), String.CASE_INSENSITIVE_ORDER));
+
+		List<RingTreeEntry> result = new ArrayList<>(entries.size());
+		Iterator<RingTreeEntry> sorted = tags.iterator();
+		for (RingTreeEntry e : entries)
+		{
+			result.add(isBankTag(e) ? sorted.next() : e);
+		}
+		return result;
+	}
+
+	private static boolean isBankTag(RingTreeEntry e)
+	{
+		return e.isAction() && BankTagsProvider.ID.equals(e.getProviderId());
 	}
 
 	private RingProvider findProvider(String id)
